@@ -36,21 +36,43 @@ export default function App() {
   }, []);
 
   const fetchStudents = async () => {
-    const { data, error } = await supabase.from('students').select('*');
-    if (error) {
-      console.error('Error fetching students:', error);
-    } else {
-      const mappedStudents = data.map(d => ({
-        studentId: d.student_id,
-        name: d.name,
-        grade: d.grade,
-        room: d.room,
-        program: d.program,
-        email: d.email,
-        id: d.id
-      }));
-      setStudents(mappedStudents);
+    let allData: any[] = [];
+    let from = 0;
+    const step = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('students')
+        .select('*')
+        .range(from, from + step - 1);
+        
+      if (error) {
+        console.error('Error fetching students:', error);
+        break;
+      }
+      
+      if (data && data.length > 0) {
+        allData = [...allData, ...data];
+        from += step;
+        if (data.length < step) {
+          hasMore = false;
+        }
+      } else {
+        hasMore = false;
+      }
     }
+
+    const mappedStudents = allData.map(d => ({
+      studentId: d.student_id,
+      name: d.name,
+      grade: d.grade,
+      room: d.room,
+      program: d.program,
+      email: d.email,
+      id: d.id
+    }));
+    setStudents(mappedStudents);
   };
 
   const fetchRecords = async () => {
