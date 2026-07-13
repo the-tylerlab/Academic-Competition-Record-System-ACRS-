@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
 import Searcher from './components/Searcher';
 import StudentManager from './components/StudentManager';
+import Login from './components/Login';
 import { supabase } from './lib/supabase';
 import { 
   BarChart, 
@@ -13,8 +14,9 @@ import {
 } from 'lucide-react';
 
 export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [role, setRole] = useState('academic'); // academic or teacher
+  const role = 'academic'; // Always admin for now
   
   // Database states
   const [students, setStudents] = useState<any[]>([]);
@@ -103,6 +105,15 @@ export default function App() {
     }, 1500);
   };
 
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setActiveTab('dashboard');
+  };
+
+  if (!isAuthenticated) {
+    return <Login onLogin={setIsAuthenticated} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 font-sans selection:bg-slate-900 selection:text-white text-base">
       
@@ -119,27 +130,7 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-5">
-          <div className="hidden md:flex items-center gap-2 bg-slate-100 rounded-full p-1.5 border border-slate-200">
-            <button 
-              onClick={() => {
-                setRole('academic');
-              }}
-              className={"px-4 py-1.5 rounded-full text-xs font-bold transition-all " + (role === 'academic' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800')}
-            >
-              ฝ่ายวิชาการ (Admin)
-            </button>
-            <button 
-              onClick={() => {
-                setRole('teacher');
-                if (activeTab === 'students') setActiveTab('searcher');
-              }}
-              className={"px-4 py-1.5 rounded-full text-xs font-bold transition-all " + (role === 'teacher' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800')}
-            >
-              ครูผู้สอน
-            </button>
-          </div>
-          <div className="h-8 w-px bg-slate-200 hidden md:block"></div>
-          <button className="text-slate-400 hover:text-rose-600 transition-colors flex items-center gap-2">
+          <button onClick={handleLogout} className="text-slate-400 hover:text-rose-600 transition-colors flex items-center gap-2 cursor-pointer">
             <LogOut size={18} strokeWidth={2.5} />
             <span className="text-sm font-bold hidden md:inline">ออกจากระบบ</span>
           </button>
@@ -187,7 +178,7 @@ export default function App() {
             <div className="bg-slate-50 rounded-lg border border-slate-200 p-4 shadow-inner">
               <p className="text-xs font-bold text-slate-500 mb-1.5">สิทธิ์การใช้งาน:</p>
               <p className="text-sm font-extrabold text-indigo-700 bg-indigo-50 inline-block px-2.5 py-1 rounded border border-indigo-100">
-                {role === 'academic' ? 'ผู้ดูแลระบบ (Admin)' : 'ผู้บันทึกข้อมูล'}
+                ผู้ดูแลระบบ (Admin)
               </p>
             </div>
           </div>
