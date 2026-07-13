@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import Dashboard from './components/Dashboard';
 import Searcher from './components/Searcher';
 import StudentManager from './components/StudentManager';
@@ -26,6 +27,8 @@ export default function App() {
   // Modal states
   const [showImportModal, setShowImportModal] = useState(false);
   const [importStatus, setImportStatus] = useState<null | 'uploading' | 'success'>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchStudents();
@@ -95,15 +98,52 @@ export default function App() {
     }
   };
 
-  const handleSimulateImport = () => {
+  const handleImportFile = async () => {
+    if (!selectedFile) {
+      alert("กรุณาเลือกไฟล์ก่อนอัปโหลด");
+      return;
+    }
     setImportStatus('uploading');
-    setTimeout(() => {
+    
+    try {
+      const data = await selectedFile.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const jsonData = XLSX.utils.sheet_to_json<any>(worksheet);
+      
+      const mappedStudents = jsonData.map(row => ({
+        student_id: String(row.student_id || row.รหัสประจำตัว || ''),
+        name: String(row.name || row['ชื่อ-สกุล'] || row['ชื่อ-นามสกุล'] || row['ชื่อ'] || ''),
+        grade: String(row.grade || row.ระดับชั้น || 'ม.4'),
+        room: String(row.room || row.ห้อง || '1'),
+        program: String(row.program || row.แผนการเรียน || 'Normal'),
+        email: String(row.email || row.อีเมล || '')
+      })).filter(s => s.student_id && s.name);
+
+      if (mappedStudents.length === 0) {
+        throw new Error("ไม่พบข้อมูลที่สามารถนำเข้าได้ กรุณาตรวจสอบหัวคอลัมน์");
+      }
+
+      // Bulk insert
+      const { error } = await supabase.from('students').insert(mappedStudents);
+      
+      if (error) throw error;
+
+      await fetchStudents(); // Refresh data
+      
       setImportStatus('success');
       setTimeout(() => {
         setImportStatus(null);
+        setSelectedFile(null);
         setShowImportModal(false);
       }, 1500);
-    }, 1500);
+
+    } catch (err: any) {
+      console.error(err);
+      alert("เกิดข้อผิดพลาดในการนำเข้า: " + err.message);
+      setImportStatus(null);
+    }
   };
 
   const handleLogout = () => {
@@ -243,10 +283,25 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                      <div className="border-2 border-dashed border-slate-200 rounded-xl p-10 text-center hover:border-slate-400 transition-colors bg-slate-50 cursor-pointer mb-6">
+                      <div 
+                        className="border-2 border-dashed border-slate-200 rounded-xl p-10 text-center hover:border-slate-400 transition-colors bg-slate-50 cursor-pointer mb-6"
+                        onClick={() => fileInputRef.current?.click()}
+                      >
                         <Upload size={32} className="mx-auto text-slate-400 mb-4" />
                         <p className="text-sm font-bold text-slate-700">คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวางที่นี่</p>
                         <p className="text-xs text-slate-500 mt-2 font-medium">รองรับไฟล์ .xlsx, .csv (ขนาดไม่เกิน 5MB)</p>
+                        {selectedFile && (
+                          <div className="mt-4 p-2 bg-indigo-50 border border-indigo-100 rounded text-indigo-700 text-xs font-bold">
+                            ไฟล์ที่เลือก: {selectedFile.name}
+                          </div>
+                        )}
+                        <input 
+                          type="file" 
+                          ref={fileInputRef} 
+                          className="hidden" 
+                          accept=".xlsx, .xls, .csv" 
+                          onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                        />
                       </div>
 
                       <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 text-xs text-blue-800 leading-relaxed font-medium mb-6">
@@ -254,8 +309,8 @@ export default function App() {
                       </div>
 
                       <button 
-                        onClick={handleSimulateImport}
-                        disabled={importStatus === 'uploading'}
+                        onClick={handleImportFile}
+                        disabled={importStatus === 'uploading' || !selectedFile}
                         className="w-full py-3 bg-slate-900 hover:bg-slate-900/90 text-white rounded-lg text-sm font-bold transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center gap-2"
                       >
                         {importStatus === 'uploading' ? (
