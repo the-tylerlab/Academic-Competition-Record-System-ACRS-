@@ -137,7 +137,8 @@ export default function App() {
             <span className="text-slate-400 text-[8px] font-bold leading-none tracking-widest mt-0.5">SYSTEM</span>
           </div>
           <div>
-            <h1 className="font-extrabold text-slate-900 text-lg tracking-tight leading-tight">ระบบจัดเก็บและคัดแยก<br/>ผลงานทางวิชาการ</h1>
+            <h1 className="font-extrabold text-slate-900 text-base md:text-lg tracking-tight leading-tight hidden sm:block">ระบบจัดเก็บและคัดแยก<br className="hidden md:block"/>ผลงานทางวิชาการ</h1>
+            <h1 className="font-extrabold text-slate-900 text-base tracking-tight leading-tight sm:hidden">ACRS System</h1>
           </div>
         </div>
 
@@ -163,10 +164,10 @@ export default function App() {
       </nav>
 
       {/* MAIN CONTENT AREA */}
-      <div className="flex h-[calc(100vh-72px)]">
+      <div className="flex h-[calc(100vh-72px)] pb-16 md:pb-0">
         
-        {/* SIDEBAR NAVIGATION - Increased width to md:w-64 */}
-        <aside className="w-16 md:w-64 bg-white border-r border-slate-200 flex flex-col justify-between py-6 sticky top-[72px] h-full shadow-3xs z-30">
+        {/* SIDEBAR NAVIGATION - Hidden on mobile */}
+        <aside className="hidden md:flex flex-col w-64 bg-white border-r border-slate-200 justify-between py-6 sticky top-[72px] h-full shadow-3xs z-30">
           <div className="px-4 flex flex-col gap-2">
             {role === 'academic' && (
               <button 
@@ -273,6 +274,42 @@ export default function App() {
 
         </main>
       </div>
+
+      {/* BOTTOM NAVIGATION - Mobile only */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-around items-center p-2 z-40 pb-safe">
+        {role === 'academic' && (
+          <button 
+            onClick={() => setActiveTab('dashboard')}
+            className={"flex flex-col items-center justify-center p-2 rounded-lg transition-colors " + (
+              activeTab === 'dashboard' ? 'text-indigo-600' : 'text-slate-400'
+            )}
+          >
+            <BarChart size={20} strokeWidth={2.5} className="mb-1" />
+            <span className="text-[10px] font-bold">ภาพรวม</span>
+          </button>
+        )}
+        <button 
+          onClick={() => setActiveTab('searcher')}
+          className={"flex flex-col items-center justify-center p-2 rounded-lg transition-colors " + (
+            activeTab === 'searcher' ? 'text-indigo-600' : 'text-slate-400'
+          )}
+        >
+          <Search size={20} strokeWidth={2.5} className="mb-1" />
+          <span className="text-[10px] font-bold">สแกนรหัส</span>
+        </button>
+        {role === 'academic' && (
+          <button 
+            onClick={() => setActiveTab('students')}
+            className={"flex flex-col items-center justify-center p-2 rounded-lg transition-colors " + (
+              activeTab === 'students' ? 'text-indigo-600' : 'text-slate-400'
+            )}
+          >
+            <Users size={20} strokeWidth={2.5} className="mb-1" />
+            <span className="text-[10px] font-bold">รายชื่อ</span>
+          </button>
+        )}
+      </nav>
+
     </div>
   );
 }
