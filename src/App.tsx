@@ -8,15 +8,16 @@ import {
   BarChart, 
   Search, 
   Users,
+  User,
   LogOut,
   Upload,
   X
 } from 'lucide-react';
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const role = 'academic'; // Always admin for now
+  const [role, setRole] = useState<'teacher' | 'academic'>('teacher');
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [activeTab, setActiveTab] = useState('searcher');
   
   // Database states
   const [students, setStudents] = useState<any[]>([]);
@@ -106,16 +107,27 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    setIsAuthenticated(false);
-    setActiveTab('dashboard');
+    setRole('teacher');
+    setActiveTab('searcher');
   };
 
-  if (!isAuthenticated) {
-    return <Login onLogin={setIsAuthenticated} />;
-  }
+  const handleLoginSuccess = (status: boolean) => {
+    if (status) {
+      setRole('academic');
+      setShowLoginModal(false);
+      setActiveTab('dashboard');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans selection:bg-slate-900 selection:text-white text-base">
+      
+      {showLoginModal && (
+        <Login 
+          onLogin={handleLoginSuccess} 
+          onClose={() => setShowLoginModal(false)} 
+        />
+      )}
       
       {/* TOP NAVIGATION */}
       <nav className="bg-white border-b border-slate-200 sticky top-0 z-40 px-6 py-4 flex justify-between items-center shadow-3xs">
@@ -130,10 +142,23 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-5">
-          <button onClick={handleLogout} className="text-slate-400 hover:text-rose-600 transition-colors flex items-center gap-2 cursor-pointer">
-            <LogOut size={18} strokeWidth={2.5} />
-            <span className="text-sm font-bold hidden md:inline">ออกจากระบบ</span>
-          </button>
+          {role === 'teacher' ? (
+            <button 
+              onClick={() => setShowLoginModal(true)} 
+              className="text-slate-500 hover:text-indigo-600 transition-colors flex items-center gap-2 cursor-pointer font-bold text-sm bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-full"
+            >
+              <User size={16} strokeWidth={2.5} />
+              <span className="hidden md:inline">เข้าสู่ระบบ Admin</span>
+            </button>
+          ) : (
+            <button 
+              onClick={handleLogout} 
+              className="text-slate-400 hover:text-rose-600 transition-colors flex items-center gap-2 cursor-pointer bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-full"
+            >
+              <LogOut size={16} strokeWidth={2.5} />
+              <span className="text-sm font-bold hidden md:inline">ออกจากระบบ Admin</span>
+            </button>
+          )}
         </div>
       </nav>
 
@@ -143,15 +168,17 @@ export default function App() {
         {/* SIDEBAR NAVIGATION - Increased width to md:w-64 */}
         <aside className="w-16 md:w-64 bg-white border-r border-slate-200 flex flex-col justify-between py-6 sticky top-[72px] h-full shadow-3xs z-30">
           <div className="px-4 flex flex-col gap-2">
-            <button 
-              onClick={() => setActiveTab('dashboard')}
-              className={"flex items-center gap-3 px-4 py-3 rounded-md transition-all group " + (
-                activeTab === 'dashboard' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
-              )}
-            >
-              <BarChart size={18} strokeWidth={2.5} className={activeTab === 'dashboard' ? 'text-white' : 'text-slate-400 group-hover:text-slate-900'} />
-              <span className="text-sm font-bold hidden md:block">ภาพรวมระบบ</span>
-            </button>
+            {role === 'academic' && (
+              <button 
+                onClick={() => setActiveTab('dashboard')}
+                className={"flex items-center gap-3 px-4 py-3 rounded-md transition-all group " + (
+                  activeTab === 'dashboard' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-900'
+                )}
+              >
+                <BarChart size={18} strokeWidth={2.5} className={activeTab === 'dashboard' ? 'text-white' : 'text-slate-400 group-hover:text-slate-900'} />
+                <span className="text-sm font-bold hidden md:block">ภาพรวมระบบ</span>
+              </button>
+            )}
             <button 
               onClick={() => setActiveTab('searcher')}
               className={"flex items-center gap-3 px-4 py-3 rounded-md transition-all group " + (
@@ -178,7 +205,7 @@ export default function App() {
             <div className="bg-slate-50 rounded-lg border border-slate-200 p-4 shadow-inner">
               <p className="text-xs font-bold text-slate-500 mb-1.5">สิทธิ์การใช้งาน:</p>
               <p className="text-sm font-extrabold text-indigo-700 bg-indigo-50 inline-block px-2.5 py-1 rounded border border-indigo-100">
-                ผู้ดูแลระบบ (Admin)
+                {role === 'academic' ? 'ผู้ดูแลระบบ (Admin)' : 'คุณครูผู้สอน'}
               </p>
             </div>
           </div>

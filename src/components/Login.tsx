@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Lock, User } from 'lucide-react';
+import { Lock, User, X } from 'lucide-react';
 
 interface LoginProps {
   onLogin: (status: boolean) => void;
+  onClose: () => void;
 }
 
-export default function Login({ onLogin }: LoginProps) {
+export default function Login({ onLogin, onClose }: LoginProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -20,8 +21,14 @@ export default function Login({ onLogin }: LoginProps) {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 selection:bg-indigo-500 selection:text-white">
-      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl border border-slate-100 overflow-hidden animate-fade-in">
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 selection:bg-indigo-500 selection:text-white animate-fade-in">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden transform transition-all relative">
+        <button 
+          onClick={onClose}
+          className="absolute top-4 right-4 z-20 text-white/70 hover:text-white transition-colors bg-white/10 hover:bg-white/20 p-1.5 rounded-full cursor-pointer"
+        >
+          <X size={20} strokeWidth={2.5} />
+        </button>
         <div className="bg-slate-900 px-8 py-10 text-center relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/40 via-slate-900 to-slate-900 z-0"></div>
           <div className="relative z-10 flex flex-col items-center">
