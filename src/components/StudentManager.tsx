@@ -16,18 +16,25 @@ export default function StudentManager({ students, setStudents, setShowImportMod
   const [formData, setFormData] = useState({ id: '', studentId: '', name: '', grade: 'ม.4', room: '1', program: 'Normal', email: '' });
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [sortBy, setSortBy] = useState<'default' | 'room' | 'id'>('default');
 
   const filteredStudents = students.filter(s => {
     const matchProg = filterProgram === 'all' || s.program === filterProgram;
     const matchSearch = s.name.includes(searchTerm) || s.studentId.includes(searchTerm);
     return matchProg && matchSearch;
-  }).sort((a, b) => {
-    // Sort by grade first (e.g. ป.1, ป.2, ม.1)
-    const gradeCompare = String(a.grade).localeCompare(String(b.grade), 'th', { numeric: true });
-    if (gradeCompare !== 0) return gradeCompare;
-    // Then sort by room (e.g. 1, 2, 10, A, B)
-    return String(a.room).localeCompare(String(b.room), 'th', { numeric: true });
   });
+
+  if (sortBy === 'room') {
+    filteredStudents.sort((a, b) => {
+      // Sort by grade first (e.g. ป.1, ป.2, ม.1)
+      const gradeCompare = String(a.grade).localeCompare(String(b.grade), 'th', { numeric: true });
+      if (gradeCompare !== 0) return gradeCompare;
+      // Then sort by room (e.g. 1, 2, 10, A, B)
+      return String(a.room).localeCompare(String(b.room), 'th', { numeric: true });
+    });
+  } else if (sortBy === 'id') {
+    filteredStudents.sort((a, b) => String(a.studentId).localeCompare(String(b.studentId), 'th', { numeric: true }));
+  }
 
   const handleDelete = async (id: string, dbId: string) => {
     if(confirm('ยืนยันการลบนักเรียนรหัส ' + id + ' ?')) {
@@ -158,13 +165,22 @@ export default function StudentManager({ students, setStudents, setShowImportMod
             </div>
           </div>
           <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as 'default' | 'room' | 'id')}
+            className="px-4 py-2.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 bg-white focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden shadow-3xs cursor-pointer"
+          >
+            <option value="default">เรียงตามการนำเข้า</option>
+            <option value="id">เรียงตามรหัสนักเรียน</option>
+            <option value="room">เรียงตามห้องเรียน</option>
+          </select>
+          <select
             value={filterProgram}
             onChange={(e) => setFilterProgram(e.target.value)}
             className="px-4 py-2.5 border border-slate-200 rounded-lg text-sm font-bold text-slate-700 bg-white focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden shadow-3xs cursor-pointer"
           >
             <option value="all">ทุกแผนการเรียน</option>
-            <option value="Normal">ภาคปกติ (Normal)</option>
-            <option value="EP">ภาคภาษาอังกฤษ (EP)</option>
+            <option value="Normal">Normal</option>
+            <option value="EP">EP</option>
           </select>
         </div>
 
