@@ -9,7 +9,7 @@ interface SearcherProps {
 }
 
 export default function Searcher({ students, onSaveRecord, role }: SearcherProps) {
-  const [selectedSource, setSelectedSource] = useState(MOCK_SOURCES[0]);
+  const [selectedSource, setSelectedSource] = useState<any>(MOCK_SOURCES[0]);
   const [inputType, setInputType] = useState('file'); // 'file' or 'url'
   const [customUrl, setCustomUrl] = useState('');
   
@@ -48,7 +48,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           setScannedText(activeSource.rawText);
 
           // MATCHING & CURRICULUM CLASSIFICATION PROCESS
-          const processedList = activeSource.parsedStudents.map((parsed) => {
+          const processedList = activeSource.parsedStudents.map((parsed: any) => {
             const dbStudent = students.find(s => 
               s.name.includes(parsed.name) || parsed.name.includes(s.name)
             );
