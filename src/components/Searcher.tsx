@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Upload } from 'lucide-react';
 import { MOCK_SOURCES } from '../mockData';
 
 interface SearcherProps {
@@ -200,20 +201,33 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
 
           {inputType === 'file' ? (
             <div>
-              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-3">เลือกแหล่งเอกสารตัวอย่างสแกน:</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {MOCK_SOURCES.filter(s => s.sourceType === 'file').map((source) => (
-                  <div 
-                    key={source.id}
-                    onClick={() => { setSelectedSource(source); setSearchCompleted(false); }}
-                    className={"p-4 rounded-xl border cursor-pointer transition-colors " + (
-                      selectedSource.id === source.id ? 'border-slate-900 bg-slate-50' : 'border-slate-200 hover:border-slate-350 bg-white'
-                    )}
-                  >
-                    <p className="text-sm font-bold text-slate-900">{source.name}</p>
-                    <p className="text-xs text-slate-500 mt-1.5 font-medium">{source.description}</p>
+              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-3">อัปโหลดไฟล์ประกาศผล (PDF, JPG, PNG):</p>
+              <div className="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer relative">
+                <input 
+                  type="file" 
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  accept=".pdf,image/*"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      const file = e.target.files[0];
+                      // Use mock source 0 but override the filename
+                      const source = { ...MOCK_SOURCES[0], id: 'uploaded-file', name: file.name, fileName: file.name, description: 'อัปโหลดสำเร็จ พร้อมทำการสแกน' };
+                      setSelectedSource(source);
+                      setSearchCompleted(false);
+                    }
+                  }}
+                />
+                <div className="flex flex-col items-center justify-center pointer-events-none">
+                  <div className="w-12 h-12 bg-white rounded-full shadow-sm flex items-center justify-center mb-3">
+                    <Upload size={24} className="text-indigo-600" />
                   </div>
-                ))}
+                  <p className="text-sm font-bold text-slate-900 mb-1">
+                    {selectedSource.id === 'uploaded-file' ? selectedSource.name : 'คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวางที่นี่'}
+                  </p>
+                  <p className="text-xs text-slate-500 font-medium">
+                    {selectedSource.id === 'uploaded-file' ? 'ไฟล์ถูกอัปโหลดเรียบร้อยแล้ว' : 'รองรับไฟล์ PDF, JPG, PNG ขนาดไม่เกิน 10MB'}
+                  </p>
+                </div>
               </div>
             </div>
           ) : (
