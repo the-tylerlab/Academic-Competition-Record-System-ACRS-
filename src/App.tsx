@@ -199,8 +199,8 @@ export default function App() {
         throw new Error("ไม่พบข้อมูลที่สามารถนำเข้าได้ กรุณาตรวจสอบหัวคอลัมน์");
       }
 
-      // Bulk insert
-      const { error } = await supabase.from('students').insert(mappedStudents);
+      // Use upsert to handle cases where the student_id already exists (it will update instead of throwing an error)
+      const { error } = await supabase.from('students').upsert(mappedStudents, { onConflict: 'student_id' });
       
       if (error) throw error;
 
