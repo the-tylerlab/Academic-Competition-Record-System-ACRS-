@@ -112,14 +112,66 @@ export default function App() {
       const worksheet = workbook.Sheets[firstSheetName];
       const jsonData = XLSX.utils.sheet_to_json<any>(worksheet);
       
-      const mappedStudents = jsonData.map(row => ({
-        student_id: String(row.student_id || row.รหัสประจำตัว || ''),
-        name: String(row.name || row['ชื่อ-สกุล'] || row['ชื่อ-นามสกุล'] || row['ชื่อ'] || ''),
-        grade: String(row.grade || row.ระดับชั้น || 'ม.4'),
-        room: String(row.room || row.ห้อง || '1'),
-        program: String(row.program || row.แผนการเรียน || 'Normal'),
-        email: String(row.email || row.อีเมล || '')
-      })).filter(s => s.student_id && s.name);
+      const mappedStudents = jsonData.map(row => {
+        // Extract basic fields
+        const studentId = String(row.student_id || row.รหัสประจำตัว || '');
+        
+        // Handle name components (in case they are separated into Title, First, Last)
+        // xlsx might parse the merged "ชื่อ-สกุล" as row['ชื่อ-สกุล'] and the next column as row['__EMPTY'] or similar.
+        // We'll try to smartly concatenate if we see "คำนำหน้า" and parts of the name.
+        let name = '';
+        if (row['ชื่อ-สกุล']) {
+          const title = row.คำนำหน้า ? String(row.คำนำหน้า).trim() + ' ' : '';
+          const firstName = String(row['ชื่อ-สกุล']).trim();
+          // The last name might be in a generic empty key if merged header
+          const lastNameKey = Object.keys(row).find(k => k.startsWith('__EMPTY'));
+          const lastName = lastNameKey && row[lastNameKey] ? ' ' + String(row[lastNameKey]).trim() : '';
+          name = `${title}${firstName}${lastName}`.trim();
+        } else {
+          name = String(row.name || row['ชื่อ-นามสกุล'] || row['ชื่อ'] || '');
+        }
+
+        // Handle Room and Grade
+        // In the example, room is "ป.1A", "ม.4/1" etc.
+        let rawRoom = String(row.room || row.ห้อง || '');
+        let grade = String(row.grade || row.ระดับชั้น || '');
+        let room = rawRoom;
+
+        // If grade is not provided separately but is in the room string (e.g. "ป.1A")
+        if (!grade && rawRoom) {
+          // simple extraction, e.g. "ป.1A" -> grade: "ป.1", room: "1A" (or just keep rawRoom as room and extract grade)
+          // Actually, let's keep it simple: if it contains a dot like "ป.1", extract that part.
+          const match = rawRoom.match(/^(ป\.\d|ม\.\d|อนุบาล\.\d)/);
+          if (match) {
+            grade = match[1];
+            // Optionally, remove the grade part from the room
+            // room = rawRoom.replace(grade, '').trim(); 
+          } else {
+            grade = 'ไม่ระบุ';
+          }
+          room = rawRoom; // Keep full string as room, or just "A" if preferred. Let's keep the full string "ป.1A" for clarity, or just extract the ending. The user said "if room ends with A, B, C". So keeping rawRoom is fine.
+        }
+
+        // Program Logic: Ends with A, B, or C -> EP
+        let program = String(row.program || row.แผนการเรียน || '');
+        if (!program && rawRoom) {
+          const upperRoom = rawRoom.toUpperCase();
+          if (upperRoom.endsWith('A') || upperRoom.endsWith('B') || upperRoom.endsWith('C')) {
+            program = 'EP';
+          } else {
+            program = 'Normal';
+          }
+        }
+
+        return {
+          student_id: studentId,
+          name: name,
+          grade: grade || 'ม.4',
+          room: room || '1',
+          program: program || 'Normal',
+          email: String(row.email || row.อีเมล || '')
+        };
+      }).filter(s => s.student_id && s.name);
 
       if (mappedStudents.length === 0) {
         throw new Error("ไม่พบข้อมูลที่สามารถนำเข้าได้ กรุณาตรวจสอบหัวคอลัมน์");
