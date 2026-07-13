@@ -34,6 +34,18 @@ export default function StudentManager({ students, setStudents, setShowImportMod
     }
   };
 
+  const handleClearAll = async () => {
+    if(confirm('⚠️ คำเตือน: ยืนยันการล้างข้อมูลนักเรียนทั้งหมดในระบบหรือไม่? (ข้อมูลจะถูกลบถาวรและไม่สามารถกู้คืนได้)')) {
+      // Use neq on a dummy UUID to delete all rows safely in Supabase
+      const { error } = await supabase.from('students').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      if (error) {
+        alert("ล้างข้อมูลไม่สำเร็จ: " + error.message);
+      } else {
+        setStudents([]);
+      }
+    }
+  };
+
   const handleOpenAddForm = () => {
     setFormData({ id: '', studentId: '', name: '', grade: 'ม.4', room: '1', program: 'Normal', email: '' });
     setIsEditing(false);
@@ -102,6 +114,13 @@ export default function StudentManager({ students, setStudents, setShowImportMod
           </div>
           <div className="flex gap-2">
             <button 
+              onClick={handleClearAll}
+              className="px-4 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-lg text-sm font-bold transition-colors cursor-pointer flex items-center gap-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+              ล้างข้อมูล
+            </button>
+            <button 
               onClick={handleOpenAddForm}
               className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold transition-colors cursor-pointer shadow-sm flex items-center gap-2"
             >
@@ -169,7 +188,7 @@ export default function StudentManager({ students, setStudents, setShowImportMod
                     <td className="px-6 py-4 font-bold text-slate-900">{st.studentId}</td>
                     <td className="px-6 py-4">{st.name}</td>
                     <td className="px-6 py-4">
-                      ม.{st.grade}/{st.room}
+                      {st.grade !== 'ไม่ระบุ' && !st.room.includes(st.grade) ? `${st.grade}/${st.room}` : st.room}
                     </td>
                     <td className="px-6 py-4">
                       <span className={"px-3 py-1 rounded-md text-xs font-bold border " + (
