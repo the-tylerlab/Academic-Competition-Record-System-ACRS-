@@ -29,7 +29,23 @@ export default function StudentManager({ students, setStudents, setShowImportMod
       // Sort by grade first (e.g. ป.1, ป.2, ม.1)
       const gradeCompare = String(a.grade).localeCompare(String(b.grade), 'th', { numeric: true });
       if (gradeCompare !== 0) return gradeCompare;
-      // Then sort by room (e.g. 1, 2, 10, A, B)
+      
+      // Extract numeric parts of room (e.g., "ป.1/10" -> "1/10" -> [1, 10])
+      const aMatch = String(a.room).match(/\d+/g);
+      const bMatch = String(b.room).match(/\d+/g);
+      
+      if (aMatch && bMatch) {
+        for (let i = 0; i < Math.min(aMatch.length, bMatch.length); i++) {
+          const numA = parseInt(aMatch[i], 10);
+          const numB = parseInt(bMatch[i], 10);
+          if (numA !== numB) return numA - numB;
+        }
+        if (aMatch.length !== bMatch.length) {
+          return aMatch.length - bMatch.length;
+        }
+      }
+      
+      // Fallback
       return String(a.room).localeCompare(String(b.room), 'th', { numeric: true });
     });
   } else if (sortBy === 'id') {
