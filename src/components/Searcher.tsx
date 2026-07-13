@@ -242,26 +242,6 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                   className="w-full px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-2xs outline-none font-semibold text-slate-800"
                 />
               </div>
-
-              <p className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-3">หรือเลือกทดสอบด้วยลิงก์ผลรางวัลจำลอง:</p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {MOCK_SOURCES.filter(s => s.sourceType === 'url').map((source) => (
-                  <div 
-                    key={source.id}
-                    onClick={() => { 
-                      setSelectedSource(source); 
-                      setCustomUrl(source.webUrl as string);
-                      setSearchCompleted(false); 
-                    }}
-                    className={"p-4 rounded-xl border cursor-pointer transition-colors " + (
-                      selectedSource.id === source.id && customUrl === source.webUrl ? 'border-slate-900 bg-slate-50' : 'border-slate-200 hover:border-slate-350 bg-white'
-                    )}
-                  >
-                    <p className="text-sm font-bold text-slate-900">ผลงานลิงก์เว็บจำลอง</p>
-                    <p className="text-xs text-slate-500 mt-1.5 truncate max-w-xs font-medium">{source.webUrl}</p>
-                  </div>
-                ))}
-              </div>
             </div>
           )}
         </div>
@@ -270,7 +250,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
         <div className="border border-slate-200 rounded-xl overflow-hidden mb-8 bg-white shadow-2xs">
           <div className="bg-slate-50 px-5 py-4 border-b border-slate-200 flex justify-between items-center">
             <span className="text-xs font-extrabold text-slate-500 uppercase tracking-widest">
-              {inputType === 'file' ? 'จำลองสกัดคำจากเอกสาร' : 'จำลองดึงเนื้อหาจากลิงก์เว็บ'}
+              {inputType === 'file' ? 'ระบบประมวลผลและสกัดข้อมูลจากเอกสาร' : 'ระบบประมวลผลและดึงข้อมูลจากลิงก์เว็บ'}
             </span>
             <button 
               onClick={handleIdSearchAndExtract}
