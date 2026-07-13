@@ -174,11 +174,11 @@ export default function App() {
           room = rawRoom; // Keep full string as room, or just "A" if preferred. Let's keep the full string "ป.1A" for clarity, or just extract the ending. The user said "if room ends with A, B, C". So keeping rawRoom is fine.
         }
 
-        // Program Logic: Ends with A, B, C, or D -> EP
+        // Program Logic: Ends with A, B, C, D, or E -> EP
         let program = String(row.program || row.แผนการเรียน || '');
         if (!program && rawRoom) {
           const upperRoom = rawRoom.toUpperCase().trim();
-          if (upperRoom.endsWith('A') || upperRoom.endsWith('B') || upperRoom.endsWith('C') || upperRoom.endsWith('D')) {
+          if (upperRoom.endsWith('A') || upperRoom.endsWith('B') || upperRoom.endsWith('C') || upperRoom.endsWith('D') || upperRoom.endsWith('E')) {
             program = 'EP';
           } else {
             program = 'Normal';
