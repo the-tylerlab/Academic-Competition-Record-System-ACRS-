@@ -21,6 +21,12 @@ export default function StudentManager({ students, setStudents, setShowImportMod
     const matchProg = filterProgram === 'all' || s.program === filterProgram;
     const matchSearch = s.name.includes(searchTerm) || s.studentId.includes(searchTerm);
     return matchProg && matchSearch;
+  }).sort((a, b) => {
+    // Sort by grade first (e.g. ป.1, ป.2, ม.1)
+    const gradeCompare = String(a.grade).localeCompare(String(b.grade), 'th', { numeric: true });
+    if (gradeCompare !== 0) return gradeCompare;
+    // Then sort by room (e.g. 1, 2, 10, A, B)
+    return String(a.room).localeCompare(String(b.room), 'th', { numeric: true });
   });
 
   const handleDelete = async (id: string, dbId: string) => {
