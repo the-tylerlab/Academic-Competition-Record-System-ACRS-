@@ -251,7 +251,10 @@ export default function App() {
             <span className="text-slate-400 text-[8px] font-bold leading-none tracking-widest mt-0.5">SYSTEM</span>
           </div>
           <div>
-            <h1 className="font-extrabold text-slate-900 text-base md:text-lg tracking-tight leading-tight hidden sm:block">ระบบจัดเก็บและคัดแยก<br className="hidden md:block"/>ผลงานทางวิชาการ</h1>
+            <h1 className="font-extrabold text-slate-900 tracking-tight leading-tight hidden sm:block">
+              <span className="text-base md:text-lg block">Academic Competition Record System</span>
+              <span className="text-xs md:text-sm text-slate-500 block mt-0.5">ระบบจัดเก็บและคัดแยกผลงานทางวิชาการ</span>
+            </h1>
             <h1 className="font-extrabold text-slate-900 text-base tracking-tight leading-tight sm:hidden">ACRS System</h1>
           </div>
         </div>
@@ -314,15 +317,6 @@ export default function App() {
                 <span className="text-sm font-bold hidden md:block">ทำเนียบรายชื่อฐานข้อมูล</span>
               </button>
             )}
-          </div>
-          
-          <div className="px-6 hidden md:block">
-            <div className="bg-slate-50 rounded-lg border border-slate-200 p-4 shadow-inner">
-              <p className="text-xs font-bold text-slate-500 mb-1.5">สิทธิ์การใช้งาน:</p>
-              <p className="text-sm font-extrabold text-indigo-700 bg-indigo-50 inline-block px-2.5 py-1 rounded border border-indigo-100">
-                {role === 'academic' ? 'ผู้ดูแลระบบ (Admin)' : 'คุณครูผู้สอน'}
-              </p>
-            </div>
           </div>
         </aside>
 
