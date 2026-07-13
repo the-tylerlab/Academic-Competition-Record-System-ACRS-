@@ -154,7 +154,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
               type="text" 
               value={recordMeta.competitionName}
               onChange={(e) => setRecordMeta({...recordMeta, competitionName: e.target.value})}
-              className="w-full px-4 py-2 border border-slate-200 bg-transparent rounded-lg text-sm focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-2xs outline-none font-semibold text-slate-800"
+              className="w-full h-[42px] px-4 py-2 border border-slate-200 bg-transparent rounded-lg text-sm focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-2xs outline-none font-semibold text-slate-800"
             />
           </div>
           <div>
@@ -162,7 +162,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
             <select 
               value={recordMeta.academicYear}
               onChange={(e) => setRecordMeta({...recordMeta, academicYear: e.target.value})}
-              className="w-full px-4 py-2 border border-slate-200 bg-white rounded-lg text-sm focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-2xs outline-none font-bold text-slate-700 cursor-pointer"
+              className="w-full h-[42px] px-4 py-2 border border-slate-200 bg-white rounded-lg text-sm focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-2xs outline-none font-bold text-slate-700 cursor-pointer"
             >
               <option value="2569">2569 (ปีปัจจุบัน)</option>
               <option value="2568">2568</option>
@@ -175,7 +175,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
               placeholder="ระบุข้อความ..."
               value={recordMeta.notes}
               onChange={(e) => setRecordMeta({...recordMeta, notes: e.target.value})}
-              className="w-full px-4 py-2 border border-slate-200 bg-transparent rounded-lg text-sm focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-2xs outline-none font-semibold text-slate-800"
+              className="w-full h-[42px] px-4 py-2 border border-slate-200 bg-transparent rounded-lg text-sm focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-2xs outline-none font-semibold text-slate-800"
             />
           </div>
         </div>
