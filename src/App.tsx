@@ -16,9 +16,21 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  const [role, setRole] = useState<'teacher' | 'academic'>('teacher');
+  const [role, setRole] = useState<'teacher' | 'academic'>(() => {
+    return (localStorage.getItem('app_role') as 'teacher' | 'academic') || 'teacher';
+  });
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const [activeTab, setActiveTab] = useState('searcher');
+  const [activeTab, setActiveTab] = useState(() => {
+    return localStorage.getItem('app_active_tab') || 'searcher';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('app_role', role);
+  }, [role]);
+
+  useEffect(() => {
+    localStorage.setItem('app_active_tab', activeTab);
+  }, [activeTab]);
   
   // Database states
   const [students, setStudents] = useState<any[]>([]);
@@ -155,14 +167,13 @@ export default function App() {
 
         // Handle Room and Grade
         // In the example, room is "ป.1A", "ม.4/1" etc.
-        let rawRoom = String(row.room || row.ห้อง || '');
-        let grade = String(row.grade || row.ระดับชั้น || '');
+        let rawRoom = String(row.room || row.ห้อง || '').trim();
+        let grade = String(row.grade || row.ระดับชั้น || '').trim();
         let room = rawRoom;
 
         // If grade is not provided separately but is in the room string (e.g. "ป.1A")
         if (!grade && rawRoom) {
-          // simple extraction, e.g. "ป.1A" -> grade: "ป.1", room: "1A" (or just keep rawRoom as room and extract grade)
-          // Actually, let's keep it simple: if it contains a dot like "ป.1", extract that part.
+          // simple extraction, e.g. "ป.1A" -> grade: "ป.1", room: "1A"
           const match = rawRoom.match(/^(ป\.\d|ม\.\d|อนุบาล\.\d)/);
           if (match) {
             grade = match[1];
@@ -244,47 +255,45 @@ export default function App() {
       )}
       
       {/* TOP NAVIGATION */}
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-40 px-6 py-4 flex justify-between items-center shadow-3xs">
-        <div className="flex items-center gap-4">
-          <div className="w-10 h-10 bg-slate-900 rounded-md flex flex-col items-center justify-center shadow-sm">
-            <span className="text-white text-xs font-black leading-none tracking-widest">ACRS</span>
-            <span className="text-slate-400 text-[8px] font-bold leading-none tracking-widest mt-0.5">SYSTEM</span>
+      <header className="sticky top-0 z-40 px-6 py-5 flex justify-between items-center bg-slate-50/90 backdrop-blur-md">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 bg-slate-900 rounded-lg flex flex-col items-center justify-center shadow-[0_2px_10px_rgba(0,0,0,0.1)]">
+            <span className="text-white text-[10px] font-black leading-none tracking-widest">ACRS</span>
           </div>
           <div>
-            <h1 className="font-extrabold text-slate-900 tracking-tight leading-tight hidden sm:block">
-              <span className="text-base md:text-lg block">Academic Competition Record System</span>
-              <span className="text-xs md:text-sm text-slate-500 block mt-0.5">ระบบจัดเก็บและคัดแยกผลงานทางวิชาการ</span>
+            <h1 className="font-bold text-slate-900 tracking-tight leading-tight hidden sm:block text-base">
+              Academic Competition Record System
             </h1>
-            <h1 className="font-extrabold text-slate-900 text-base tracking-tight leading-tight sm:hidden">ACRS System</h1>
+            <h1 className="font-bold text-slate-900 text-base tracking-tight leading-tight sm:hidden">ACRS</h1>
           </div>
         </div>
 
-        <div className="flex items-center gap-5">
+        <div className="flex items-center gap-4">
           {role === 'teacher' ? (
             <button 
               onClick={() => setShowLoginModal(true)} 
-              className="text-slate-500 hover:text-indigo-600 transition-colors flex items-center gap-2 cursor-pointer font-bold text-sm bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-full"
+              className="text-slate-600 hover:text-slate-900 transition-all flex items-center gap-2 cursor-pointer font-semibold text-sm px-4 py-2 rounded-full hover:bg-slate-200/50 active:scale-95"
             >
-              <User size={16} strokeWidth={2.5} />
+              <User size={16} strokeWidth={2} />
               <span className="hidden md:inline">เข้าสู่ระบบ Admin</span>
             </button>
           ) : (
             <button 
               onClick={handleLogout} 
-              className="text-slate-400 hover:text-rose-600 transition-colors flex items-center gap-2 cursor-pointer bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-full"
+              className="text-slate-500 hover:text-slate-900 transition-all flex items-center gap-2 cursor-pointer font-semibold text-sm px-4 py-2 rounded-full hover:bg-slate-200/50 active:scale-95"
             >
-              <LogOut size={16} strokeWidth={2.5} />
-              <span className="text-sm font-bold hidden md:inline">ออกจากระบบ Admin</span>
+              <LogOut size={16} strokeWidth={2} />
+              <span className="hidden md:inline">ออกจากระบบ Admin</span>
             </button>
           )}
         </div>
-      </nav>
+      </header>
 
       {/* MAIN CONTENT AREA */}
       <div className="flex h-[calc(100vh-72px)] pb-16 md:pb-0">
         
         {/* SIDEBAR NAVIGATION - Hidden on mobile */}
-        <aside className="hidden md:flex flex-col w-64 bg-white border-r border-slate-200 justify-between py-6 sticky top-[72px] h-full shadow-3xs z-30">
+        <aside className="hidden md:flex flex-col w-64 bg-transparent justify-between py-2 sticky top-[76px] h-full z-30">
           <div className="px-4 flex flex-col gap-2">
             {role === 'academic' && (
               <button 
@@ -331,11 +340,11 @@ export default function App() {
 
           {/* IMPORT MODAL */}
           {showImportModal && (
-            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
-              <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden transform transition-all">
-                <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in">
+              <div className="bg-white rounded-2xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.1)] border border-slate-200 w-full max-w-lg overflow-hidden transform transition-all animate-modal-in">
+                <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white">
                   <h3 className="font-bold text-slate-900 text-base">นำเข้าทำเนียบนักเรียน (Excel/CSV)</h3>
-                  <button onClick={() => setShowImportModal(false)} className="text-slate-400 hover:text-slate-900 transition p-1">
+                  <button onClick={() => setShowImportModal(false)} className="text-slate-400 hover:text-slate-900 transition p-1.5 hover:bg-slate-100 rounded-full">
                     <X size={20} strokeWidth={2.5} />
                   </button>
                 </div>
@@ -343,24 +352,24 @@ export default function App() {
                 <div className="p-8">
                   {importStatus === 'success' ? (
                     <div className="text-center py-8">
-                      <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-200 shadow-sm">
+                      <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
                         <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
                       </div>
                       <p className="font-bold text-slate-900 text-lg">อัปโหลดสำเร็จ</p>
-                      <p className="text-sm text-slate-500 mt-2">อัปเดตฐานข้อมูลทำเนียบเรียบร้อยแล้ว</p>
+                      <p className="text-sm text-slate-500 mt-2 font-medium">อัปเดตฐานข้อมูลทำเนียบเรียบร้อยแล้ว</p>
                     </div>
                   ) : (
                     <>
                       <div 
-                        className="border-2 border-dashed border-slate-200 rounded-xl p-10 text-center hover:border-slate-400 transition-colors bg-slate-50 cursor-pointer mb-6"
+                        className="border border-slate-200 rounded-xl p-10 text-center hover:border-slate-400 transition-colors bg-slate-50/50 hover:bg-slate-50 cursor-pointer mb-6"
                         onClick={() => fileInputRef.current?.click()}
                       >
-                        <Upload size={32} className="mx-auto text-slate-400 mb-4" />
-                        <p className="text-sm font-bold text-slate-700">คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวางที่นี่</p>
+                        <Upload size={32} className="mx-auto text-slate-400 mb-4" strokeWidth={1.5} />
+                        <p className="text-sm font-semibold text-slate-800">คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวางที่นี่</p>
                         <p className="text-xs text-slate-500 mt-2 font-medium">รองรับไฟล์ .xlsx, .csv (ขนาดไม่เกิน 5MB)</p>
                         {selectedFile && (
-                          <div className="mt-4 p-2 bg-indigo-50 border border-indigo-100 rounded text-indigo-700 text-xs font-bold">
-                            ไฟล์ที่เลือก: {selectedFile.name}
+                          <div className="mt-4 p-2 bg-white border border-slate-200 shadow-sm rounded-lg text-slate-700 text-xs font-bold inline-block mx-auto">
+                            {selectedFile.name}
                           </div>
                         )}
                         <input 
@@ -398,40 +407,42 @@ export default function App() {
         </main>
       </div>
 
-      {/* BOTTOM NAVIGATION - Mobile only */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 flex justify-around items-center p-2 z-40 pb-safe">
-        {role === 'academic' && (
-          <button 
-            onClick={() => setActiveTab('dashboard')}
-            className={"flex flex-col items-center justify-center p-2 rounded-lg transition-colors " + (
-              activeTab === 'dashboard' ? 'text-indigo-600' : 'text-slate-400'
-            )}
-          >
-            <BarChart size={20} strokeWidth={2.5} className="mb-1" />
-            <span className="text-[10px] font-bold">ภาพรวม</span>
-          </button>
-        )}
-        <button 
-          onClick={() => setActiveTab('searcher')}
-          className={"flex flex-col items-center justify-center p-2 rounded-lg transition-colors " + (
-            activeTab === 'searcher' ? 'text-indigo-600' : 'text-slate-400'
+      {/* BOTTOM NAVIGATION - Mobile only Floating Pill */}
+      <div className="md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-max pb-safe">
+        <nav className="bg-white/90 backdrop-blur-md border border-slate-200/60 shadow-[0_8px_30px_rgb(0,0,0,0.08)] rounded-full flex justify-center items-center p-1.5 gap-1">
+          {role === 'academic' && (
+            <button 
+              onClick={() => setActiveTab('dashboard')}
+              className={"flex items-center gap-2 px-4 py-2.5 rounded-full transition-all duration-300 " + (
+                activeTab === 'dashboard' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+              )}
+            >
+              <BarChart size={18} strokeWidth={activeTab === 'dashboard' ? 2.5 : 2} />
+              {activeTab === 'dashboard' && <span className="text-xs font-semibold">ภาพรวม</span>}
+            </button>
           )}
-        >
-          <Search size={20} strokeWidth={2.5} className="mb-1" />
-          <span className="text-[10px] font-bold">สแกนรหัส</span>
-        </button>
-        {role === 'academic' && (
           <button 
-            onClick={() => setActiveTab('students')}
-            className={"flex flex-col items-center justify-center p-2 rounded-lg transition-colors " + (
-              activeTab === 'students' ? 'text-indigo-600' : 'text-slate-400'
+            onClick={() => setActiveTab('searcher')}
+            className={"flex items-center gap-2 px-4 py-2.5 rounded-full transition-all duration-300 " + (
+              activeTab === 'searcher' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
             )}
           >
-            <Users size={20} strokeWidth={2.5} className="mb-1" />
-            <span className="text-[10px] font-bold">รายชื่อ</span>
+            <Search size={18} strokeWidth={activeTab === 'searcher' ? 2.5 : 2} />
+            {activeTab === 'searcher' && <span className="text-xs font-semibold">สแกนรหัส</span>}
           </button>
-        )}
-      </nav>
+          {role === 'academic' && (
+            <button 
+              onClick={() => setActiveTab('students')}
+              className={"flex items-center gap-2 px-4 py-2.5 rounded-full transition-all duration-300 " + (
+                activeTab === 'students' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100'
+              )}
+            >
+              <Users size={18} strokeWidth={activeTab === 'students' ? 2.5 : 2} />
+              {activeTab === 'students' && <span className="text-xs font-semibold">รายชื่อ</span>}
+            </button>
+          )}
+        </nav>
+      </div>
 
     </div>
   );
