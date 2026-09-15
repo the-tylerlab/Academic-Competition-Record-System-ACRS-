@@ -121,11 +121,11 @@ export function cleanAndNormalizeThaiName(rawName: string): string {
 }
 
 /**
- * Extract consonant skeleton of Thai words (ignoring vowels and tone marks for OCR error tolerance)
+ * Extract consonant skeleton of Thai words (ignoring vowels, tones, punctuation, and digits for OCR error tolerance)
  */
 export function stripThaiVowelsAndTones(str: string): string {
   if (!str) return '';
-  return str.replace(/[\u0E30-\u0E3A\u0E47-\u0E4E\s]/g, '').toLowerCase();
+  return str.replace(/[\u0E30-\u0E3A\u0E47-\u0E4E\s\r\n\t\-_.,\/\\()\[\]{}|:;\"'0-9๐-๙]/g, '').toLowerCase();
 }
 
 /**
@@ -240,9 +240,10 @@ function extractContextInfo(line: string, surroundingLines: string[]): { subject
 
 /**
  * Scan raw text against students database focusing on MATCHED students
- * Includes:
- * 1) Any student in the school roster whose name appears in the document
- * 2) Any student listed under "โรงเรียนอัสสัมชัญธนบุรี" / "อัสสัมชัญ ธนบุรี" / "ACT"
+ * Uses 3-layer matching:
+ * 1) Full-document consonant skeleton & spaceless search (handles OCR line breaks, dropped vowels, Thai digits, broken spaces)
+ * 2) Line-by-line precise First Name + Last Name matching
+ * 3) Detection of school name rows (โรงเรียนอัสสัมชัญธนบุรี / อสธ. / ACT)
  */
 export function extractAndMatchStudentsFromText(
   rawText: string,
@@ -256,8 +257,13 @@ export function extractAndMatchStudentsFromText(
   if (!rawText || !rawText.trim()) return [];
 
   const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const fullDocSkel = stripThaiVowelsAndTones(rawText);
+  const fullDocNoSpace = rawText.replace(/\s+/g, '');
 
-  // Strategy 1: Scan student roster against document text by First Name + Last Name
+  // Global context detection from the whole document
+  const defaultContext = extractContextInfo(rawText.slice(0, 500), lines.slice(0, 10));
+
+  // Strategy 1: Scan student roster against document (Global Skeleton & Proximity Search)
   studentPool.forEach(student => {
     const cleanDbName = cleanAndNormalizeThaiName(student.name);
     const { firstName, lastName } = splitFirstAndLastName(student.name);
@@ -272,52 +278,50 @@ export function extractAndMatchStudentsFromText(
     let matchedLine = '';
     let lineIndex = -1;
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const cleanLine = cleanAndNormalizeThaiName(line);
-      const skelLine = stripThaiVowelsAndTones(cleanLine);
-      const lineNoSpace = line.replace(/\s+/g, '');
-      const targetNoSpace = (firstName + lastName).replace(/\s+/g, '');
-      const skelLineNoSpace = stripThaiVowelsAndTones(lineNoSpace);
-      const skelTargetNoSpace = stripThaiVowelsAndTones(targetNoSpace);
+    // 1. Direct or Spaceless text match in full document
+    const studentNoSpace = (firstName + lastName).replace(/\s+/g, '');
+    if (rawText.includes(cleanDbName) || (studentNoSpace.length >= 4 && fullDocNoSpace.includes(studentNoSpace))) {
+      foundInText = true;
+    }
 
-      // Check full name without prefix
-      if (
-        line.includes(cleanDbName) ||
-        cleanLine.includes(cleanDbName) ||
-        lineNoSpace.includes(targetNoSpace) ||
-        (skelDbName.length >= 4 && skelLine.includes(skelDbName)) ||
-        (skelTargetNoSpace.length >= 4 && skelLineNoSpace.includes(skelTargetNoSpace)) ||
-        isNameMatch(cleanDbName, cleanLine)
-      ) {
-        foundInText = true;
-        matchedLine = line;
-        lineIndex = i;
-        break;
-      }
+    // 2. Global Consonant Skeleton match (handles OCR errors, dropped vowels, spacing artifacts)
+    if (!foundInText && skelDbName.length >= 4 && fullDocSkel.includes(skelDbName)) {
+      foundInText = true;
+    }
 
-      // Check both first name and last name appearing on the same line
-      if (firstName.length >= 2 && lastName.length >= 2) {
-        const hasFirst = cleanLine.includes(firstName) || (skelFirst.length >= 2 && skelLineNoSpace.includes(skelFirst));
-        const hasLast = cleanLine.includes(lastName) || (skelLast.length >= 2 && skelLineNoSpace.includes(skelLast));
-        if (hasFirst && hasLast) {
+    // 3. Proximity Skeleton match (first name and last name appearing within 50 characters of each other)
+    if (!foundInText && skelFirst.length >= 3 && skelLast.length >= 3) {
+      const firstIdx = fullDocSkel.indexOf(skelFirst);
+      if (firstIdx !== -1) {
+        const windowAfter = fullDocSkel.substring(firstIdx, firstIdx + skelFirst.length + 50);
+        if (windowAfter.includes(skelLast)) {
           foundInText = true;
-          matchedLine = line;
-          lineIndex = i;
-          break;
         }
       }
     }
 
+    // Find the closest line for context if found
     if (foundInText) {
-      const nearbyLines = lines.slice(Math.max(0, lineIndex - 3), Math.min(lines.length, lineIndex + 4));
-      const { subject, award } = extractContextInfo(matchedLine, nearbyLines);
+      for (let i = 0; i < lines.length; i++) {
+        const lSkel = stripThaiVowelsAndTones(lines[i]);
+        if (lSkel.includes(skelFirst) || lSkel.includes(skelLast)) {
+          matchedLine = lines[i];
+          lineIndex = i;
+          break;
+        }
+      }
+
+      const nearbyLines = lineIndex !== -1 
+        ? lines.slice(Math.max(0, lineIndex - 3), Math.min(lines.length, lineIndex + 4))
+        : lines.slice(0, 10);
+
+      const context = extractContextInfo(matchedLine || rawText.slice(0, 300), nearbyLines);
 
       results.push({
         name: cleanDbName,
         cleanName: cleanDbName,
-        subject,
-        award,
+        subject: context.subject || defaultContext.subject,
+        award: context.award || defaultContext.award,
         isMatched: true,
         studentId: student.studentId,
         grade: student.grade,
@@ -335,9 +339,6 @@ export function extractAndMatchStudentsFromText(
   // Strategy 2: Detect any lines that mention "โรงเรียนอัสสัมชัญธนบุรี" / "อัสสัมชัญ ธนบุรี"
   lines.forEach((line, index) => {
     if (ACT_SCHOOL_REGEX.test(line)) {
-      // Extract student name from this ACT row
-      // Row pattern 1: "7  31166  นายธนบูรณ์  พุทธชัย  โรงเรียนอัสสัมชัญธนบุรี"
-      // Row pattern 2: Line 1: "นายธนบูรณ์ พุทธชัย", Line 2: "โรงเรียนอัสสัมชัญธนบุรี"
       let candidateName = cleanAndNormalizeThaiName(line);
       if (!candidateName || candidateName.length < 4) {
         if (index > 0) {
@@ -353,15 +354,15 @@ export function extractAndMatchStudentsFromText(
 
       const matchedDb = findMatchingStudent(candidateName, studentPool);
       const nearbyLines = lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 4));
-      const { subject, award } = extractContextInfo(line, nearbyLines);
+      const context = extractContextInfo(line, nearbyLines);
 
       if (matchedDb) {
         if (!processedStudentIds.has(matchedDb.studentId)) {
           results.push({
             name: cleanAndNormalizeThaiName(matchedDb.name),
             cleanName: candidateName,
-            subject,
-            award,
+            subject: context.subject || defaultContext.subject,
+            award: context.award || defaultContext.award,
             isMatched: true,
             studentId: matchedDb.studentId,
             grade: matchedDb.grade,
@@ -374,12 +375,12 @@ export function extractAndMatchStudentsFromText(
           processedNames.add(candidateName);
         }
       } else {
-        // ACT Student found from school name in PDF (even if not yet in database)
+        // ACT Student found from school name in PDF
         results.push({
           name: candidateName,
           cleanName: candidateName,
-          subject,
-          award,
+          subject: context.subject || defaultContext.subject,
+          award: context.award || defaultContext.award,
           isMatched: true,
           studentId: "รอระบุรหัส (อสธ.)",
           grade: "ม.5",
