@@ -131,6 +131,50 @@ export function stripThaiVowelsAndTones(str: string): string {
 }
 
 /**
+ * Calculate Levenshtein edit distance between two strings
+ */
+export function levenshteinDistance(s1: string, s2: string): number {
+  const m = s1.length;
+  const n = s2.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (s1[i - 1] === s2[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1];
+      } else {
+        dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      }
+    }
+  }
+  return dp[m][n];
+}
+
+/**
+ * Fuzzy substring search using sliding window on consonant skeleton
+ */
+export function fuzzySubstringMatch(docSkel: string, targetSkel: string, maxDistance: number = 1): boolean {
+  const tLen = targetSkel.length;
+  if (tLen === 0) return false;
+  if (docSkel.includes(targetSkel)) return true;
+
+  // Sliding window across docSkel
+  for (let len = tLen - 1; len <= tLen + 1; len++) {
+    if (len <= 0) continue;
+    for (let i = 0; i <= docSkel.length - len; i++) {
+      const sub = docSkel.substring(i, i + len);
+      if (levenshteinDistance(sub, targetSkel) <= maxDistance) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Extract split First Name and Last Name
  */
 export function splitFirstAndLastName(name: string): { firstName: string; lastName: string } {
@@ -169,6 +213,7 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
   if (skelDb.length >= 4 && skelQuery.length >= 4) {
     if (skelDb === skelQuery) return true;
     if (skelDb.includes(skelQuery) || skelQuery.includes(skelDb)) return true;
+    if (fuzzySubstringMatch(skelQuery, skelDb, 1) || fuzzySubstringMatch(skelDb, skelQuery, 1)) return true;
   }
 
   // 4. First name & Last name matching
@@ -219,6 +264,9 @@ export function findMatchingStudent(targetName: string, students: Student[]): St
       if (skelDb === skelTarget || skelDb.includes(skelTarget) || skelTarget.includes(skelDb)) {
         return st;
       }
+      if (fuzzySubstringMatch(skelTarget, skelDb, 1)) {
+        return st;
+      }
     }
   }
 
@@ -232,7 +280,10 @@ export function findMatchingStudent(targetName: string, students: Student[]): St
         const { firstName, lastName } = splitFirstAndLastName(st.name);
         const dbFirstSkel = stripThaiVowelsAndTones(firstName);
         const dbLastSkel = stripThaiVowelsAndTones(lastName);
-        if (dbFirstSkel === firstSkel && (dbLastSkel === lastSkel || dbLastSkel.startsWith(lastSkel) || lastSkel.startsWith(dbLastSkel))) {
+        if (
+          (dbFirstSkel === firstSkel || fuzzySubstringMatch(dbFirstSkel, firstSkel, 1)) &&
+          (dbLastSkel === lastSkel || dbLastSkel.startsWith(lastSkel) || lastSkel.startsWith(dbLastSkel) || fuzzySubstringMatch(dbLastSkel, lastSkel, 1))
+        ) {
           return st;
         }
       }
@@ -276,7 +327,7 @@ function extractContextInfo(line: string, surroundingLines: string[]): { subject
  * Scan raw text against students database focusing on MATCHED students
  * Uses 3-layer matching:
  * 1) Full-document consonant skeleton & spaceless search (handles OCR line breaks, dropped vowels, Thai digits, broken spaces)
- * 2) Line-by-line precise First Name + Last Name matching
+ * 2) Fuzzy Levenshtein skeleton search for damaged OCR characters
  * 3) Detection of school name rows (โรงเรียนอัสสัมชัญธนบุรี / อสธ. / ACT)
  */
 export function extractAndMatchStudentsFromText(
@@ -323,14 +374,23 @@ export function extractAndMatchStudentsFromText(
       foundInText = true;
     }
 
-    // 3. Proximity Skeleton match (first name and last name appearing within 50 characters of each other)
+    // 3. Proximity Skeleton match (first name and last name appearing within 60 characters of each other)
     if (!foundInText && skelFirst.length >= 3 && skelLast.length >= 3) {
       const firstIdx = fullDocSkel.indexOf(skelFirst);
       if (firstIdx !== -1) {
-        const windowAfter = fullDocSkel.substring(firstIdx, firstIdx + skelFirst.length + 50);
+        const windowAfter = fullDocSkel.substring(firstIdx, firstIdx + skelFirst.length + 60);
         if (windowAfter.includes(skelLast)) {
           foundInText = true;
         }
+      }
+    }
+
+    // 4. Fuzzy Skeleton Match with Levenshtein distance (for severe OCR character recognition noise)
+    if (!foundInText && skelFirst.length >= 4 && skelLast.length >= 4) {
+      const firstMatched = fuzzySubstringMatch(fullDocSkel, skelFirst, 1);
+      const lastMatched = fuzzySubstringMatch(fullDocSkel, skelLast, 1);
+      if (firstMatched && lastMatched) {
+        foundInText = true;
       }
     }
 
