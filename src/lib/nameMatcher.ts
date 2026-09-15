@@ -65,7 +65,7 @@ const TITLE_PREFIXES = [
 ];
 
 // Target school patterns (Assumption College Thonburi / อัสสัมชัญธนบุรี)
-export const ACT_SCHOOL_REGEX = /(?:โรงเรียน|ร\.ร\.)?\s*อัสสัมชัญ\s*ธนบุรี|อัสสัมชัญธนบุรี|อสธ\.?|ACT|Assumption\s*College\s*Thonburi/i;
+export const ACT_SCHOOL_REGEX = /(?:โรงเรียน|ร\.ร\.)?\s*อัสสัมชัญ[\s\-]*ธนบุรี|อัสสัมชัญธนบุรี|อสธ\.?|\bACT\b|Assumption\s*College\s*Thonburi/i;
 
 /**
  * Remove all title prefixes, numbers, symbols, and extra whitespace
@@ -78,11 +78,15 @@ export function cleanAndNormalizeThaiName(rawName: string): string {
     .replace(/\([^)]*\)/g, ' ')
     .replace(/\[[^\]]*\]/g, ' ')
     .replace(/\{[^}]*\}/g, ' ')
+    // Remove school names starting with โรงเรียน, ร.ร., อัสสัมชัญ, Assumption
+    .replace(/(?:โรงเรียน|ร\.ร\.)\s*[^\n\t\r]+/g, ' ')
+    .replace(/อัสสัมชัญ[\s\-]*ธนบุรี[^\n\t\r]*/gi, ' ')
+    .replace(/Assumption\s*College[^\n\t\r]*/gi, ' ')
+    .replace(/\s+(?:สวนกุหลาบ|เทพศิรินทร์|บดินทรเดชา|เตรียมอุดม|สามเสน|สตรีวิทยา|มหิดลวิทยานุสรณ์|กรุงเทพคริสเตียน|เซนต์คาเบรียล|เซนต์ดอมินิก|มาแตร์เดอี)[^\n\t\r]*/gi, ' ')
+    // Remove leading numbers, ranks, student IDs (e.g., '7 31166', '1.', '1)', 'No. 1')
     .replace(/^(\d+[\.\)\-:]*|\(+\d+\)+|[-*•#]+|no\.?\s*\d+)\s*/i, '')
-    .replace(/^\d{4,6}\s+/, '')
+    .replace(/^\d{4,8}\s+/, '')
     .replace(/\s*-\s*.*$/, '')
-    // Remove school names if in candidate string
-    .replace(/(?:โรงเรียน|ร\.ร\.)?[^\n\d]{2,30}(?:ธนบุรี|วิทยา|ศึกษา|วิทยาลัย|ราชินี|สาธิต)[^\n]*/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
