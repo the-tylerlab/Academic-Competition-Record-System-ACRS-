@@ -327,7 +327,7 @@ function extractContextInfo(line: string, surroundingLines: string[]): { subject
  * Scan raw text against students database focusing strictly on MATCHED students
  * Principles:
  * 1) NEVER match by numbers/ID (document numbers are competition seats/rankings, not school IDs)
- * 2) Match strictly by First Name AND Last Name appearing TOGETHER on the same row/block
+ * 2) Multi-line sliding window matching (handles vertical column OCR where First Name, Last Name, and School are on separate lines)
  * 3) Detect students affiliated with "โรงเรียนอัสสัมชัญธนบุรี" / "อัสสัมชัญ ธนบุรี" / "ACT"
  */
 export function extractAndMatchStudentsFromText(
@@ -344,7 +344,7 @@ export function extractAndMatchStudentsFromText(
   const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const defaultContext = extractContextInfo(rawText.slice(0, 500), lines.slice(0, 10));
 
-  // Strategy 1: Match students whose First Name AND Last Name appear together on the same line
+  // Strategy 1: Match students whose First Name AND Last Name appear together in a sliding window (1-4 lines)
   studentPool.forEach(student => {
     const cleanDbName = cleanAndNormalizeThaiName(student.name);
     const { firstName, lastName } = splitFirstAndLastName(student.name);
@@ -360,31 +360,32 @@ export function extractAndMatchStudentsFromText(
     let lineIndex = -1;
 
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const lineNoSpace = line.replace(/\s+/g, '');
-      const skelLine = stripThaiVowelsAndTones(line);
+      // Check a sliding window of 1 to 4 adjacent lines (handles multi-line and vertical OCR output)
+      const windowStr = lines.slice(i, Math.min(lines.length, i + 4)).join(' ');
+      const windowNoSpace = windowStr.replace(/\s+/g, '');
+      const skelWindow = stripThaiVowelsAndTones(windowStr);
 
-      // Condition A: Full First + Last Name exact string on this line
-      const fullTargetNoSpace = (firstName + lastName).replace(/\s+/g, '');
-      const hasDirectFull = fullTargetNoSpace.length >= 4 && lineNoSpace.includes(fullTargetNoSpace);
+      // Condition A: Full First + Last Name exact string in window
+      const targetNoSpace = (firstName + lastName).replace(/\s+/g, '');
+      const hasDirectFull = targetNoSpace.length >= 4 && windowNoSpace.includes(targetNoSpace);
 
-      // Condition B: Full First + Last Name consonant skeleton on this line
-      const hasFullSkel = skelDbName.length >= 4 && skelLine.includes(skelDbName);
+      // Condition B: Full First + Last Name consonant skeleton in window
+      const hasFullSkel = skelDbName.length >= 4 && skelWindow.includes(skelDbName);
 
-      // Condition C: BOTH First Name skeleton AND Last Name skeleton appear on this line
-      const hasBothFirstAndLast = (skelFirst.length >= 3 && skelLine.includes(skelFirst)) && 
-                                  (skelLast.length >= 3 && skelLine.includes(skelLast));
+      // Condition C: BOTH First Name skeleton AND Last Name skeleton appear in window
+      const hasBothFirstAndLast = (skelFirst.length >= 3 && skelWindow.includes(skelFirst)) && 
+                                  (skelLast.length >= 3 && skelWindow.includes(skelLast));
 
       if (hasDirectFull || hasFullSkel || hasBothFirstAndLast) {
         foundInText = true;
-        matchedLine = line;
+        matchedLine = windowStr;
         lineIndex = i;
         break;
       }
     }
 
     if (foundInText) {
-      const nearbyLines = lines.slice(Math.max(0, lineIndex - 3), Math.min(lines.length, lineIndex + 4));
+      const nearbyLines = lines.slice(Math.max(0, lineIndex - 3), Math.min(lines.length, lineIndex + 5));
       const context = extractContextInfo(matchedLine, nearbyLines);
 
       results.push({
@@ -409,6 +410,45 @@ export function extractAndMatchStudentsFromText(
   // Strategy 2: Detect rows affiliated with "โรงเรียนอัสสัมชัญธนบุรี" / "อัสสัมชัญ ธนบุรี" / "ACT"
   lines.forEach((line, index) => {
     if (ACT_SCHOOL_REGEX.test(line)) {
+      // Look at an 8-line neighborhood around the ACT school mention
+      const neighborhood = lines.slice(Math.max(0, index - 4), Math.min(lines.length, index + 5)).join(' ');
+      const skelNeighbor = stripThaiVowelsAndTones(neighborhood);
+
+      // 1. Check if any student in pool matches in this ACT neighborhood
+      studentPool.forEach(student => {
+        if (processedStudentIds.has(student.studentId)) return;
+        const cleanDbName = cleanAndNormalizeThaiName(student.name);
+        const { firstName, lastName } = splitFirstAndLastName(student.name);
+        const skelDbName = stripThaiVowelsAndTones(cleanDbName);
+        const skelFirst = stripThaiVowelsAndTones(firstName);
+        const skelLast = stripThaiVowelsAndTones(lastName);
+
+        if (
+          (skelDbName.length >= 4 && skelNeighbor.includes(skelDbName)) ||
+          (skelFirst.length >= 3 && skelNeighbor.includes(skelFirst) && skelLast.length >= 3 && skelNeighbor.includes(skelLast))
+        ) {
+          const nearbyLines = lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 5));
+          const context = extractContextInfo(line, nearbyLines);
+
+          results.push({
+            name: cleanDbName,
+            cleanName: cleanDbName,
+            subject: context.subject || defaultContext.subject,
+            award: context.award || defaultContext.award,
+            isMatched: true,
+            studentId: student.studentId,
+            grade: student.grade,
+            room: student.room,
+            program: student.program,
+            email: student.email || '',
+            matchedStudent: student
+          });
+          processedStudentIds.add(student.studentId);
+          processedNames.add(cleanDbName);
+        }
+      });
+
+      // 2. If no student from pool matched, extract the candidate name from line
       let candidateName = cleanAndNormalizeThaiName(line);
       if (!candidateName || candidateName.length < 4) {
         if (index > 0) {
@@ -419,15 +459,12 @@ export function extractAndMatchStudentsFromText(
         }
       }
 
-      if (!candidateName || candidateName.length < 4) return;
-      if (processedNames.has(candidateName)) return;
+      if (candidateName && candidateName.length >= 4 && !processedNames.has(candidateName)) {
+        const matchedDb = findMatchingStudent(candidateName, studentPool);
+        const nearbyLines = lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 5));
+        const context = extractContextInfo(line, nearbyLines);
 
-      const matchedDb = findMatchingStudent(candidateName, studentPool);
-      const nearbyLines = lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 4));
-      const context = extractContextInfo(line, nearbyLines);
-
-      if (matchedDb) {
-        if (!processedStudentIds.has(matchedDb.studentId)) {
+        if (matchedDb && !processedStudentIds.has(matchedDb.studentId)) {
           results.push({
             name: cleanAndNormalizeThaiName(matchedDb.name),
             cleanName: candidateName,
@@ -443,22 +480,21 @@ export function extractAndMatchStudentsFromText(
           });
           processedStudentIds.add(matchedDb.studentId);
           processedNames.add(candidateName);
+        } else if (!matchedDb) {
+          results.push({
+            name: candidateName,
+            cleanName: candidateName,
+            subject: context.subject || defaultContext.subject,
+            award: context.award || defaultContext.award,
+            isMatched: true,
+            studentId: "รอระบุรหัส (อสธ.)",
+            grade: "ม.5",
+            room: "1",
+            program: "Normal",
+            email: ""
+          });
+          processedNames.add(candidateName);
         }
-      } else {
-        // ACT Student found from school name in PDF (even if not yet in database)
-        results.push({
-          name: candidateName,
-          cleanName: candidateName,
-          subject: context.subject || defaultContext.subject,
-          award: context.award || defaultContext.award,
-          isMatched: true,
-          studentId: "รอระบุรหัส (อสธ.)",
-          grade: "ม.5",
-          room: "1",
-          program: "Normal",
-          email: ""
-        });
-        processedNames.add(candidateName);
       }
     }
   });
