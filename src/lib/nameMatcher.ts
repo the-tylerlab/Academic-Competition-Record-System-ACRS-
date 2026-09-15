@@ -27,7 +27,6 @@ export interface MatchedResult {
 
 // Common Thai & English title prefixes
 const TITLE_PREFIXES = [
-  // Thai prefixes (ordered longest first to avoid partial replacement)
   'เด็กชาย',
   'เด็กหญิง',
   'นางสาว',
@@ -45,7 +44,6 @@ const TITLE_PREFIXES = [
   'ผศ.',
   'รศ.',
   'ศ.',
-  // English prefixes
   'mr.',
   'mr',
   'miss',
@@ -66,13 +64,16 @@ export function cleanAndNormalizeThaiName(rawName: string): string {
 
   let name = rawName.trim();
 
-  // Remove parenthesis and brackets content (e.g. (โรงเรียน...), (ชั้น ม.5...))
+  // Remove parenthesis and brackets content
   name = name.replace(/\([^)]*\)/g, ' ');
   name = name.replace(/\[[^\]]*\]/g, ' ');
   name = name.replace(/\{[^}]*\}/g, ' ');
 
-  // Remove leading numbers or bullets (e.g. "1.", "2)", "•", "-", "No. 1")
+  // Remove leading numbers or bullets (e.g. "1.", "2)", "•", "-", "30031")
   name = name.replace(/^(\d+[\.\)\-:]*|\(+\d+\)+|[-*•#]+|no\.?\s*\d+)\s*/i, '');
+
+  // Remove exam id if attached at beginning (e.g. "30031 ด.ช.จิรเดช")
+  name = name.replace(/^\d{4,6}\s+/, '');
 
   // Remove award suffixes like "- ผ่านเข้ารอบสอง", "- ชนะเลิศ"
   name = name.replace(/\s*-\s*.*$/, '');
@@ -84,13 +85,11 @@ export function cleanAndNormalizeThaiName(rawName: string): string {
   for (const prefix of TITLE_PREFIXES) {
     const isThai = !/^[a-zA-Z]/.test(prefix);
     if (isThai) {
-      // Thai prefix might or might not have space after it (e.g. "นายสมศักดิ์" or "นาย สมศักดิ์")
       if (name.startsWith(prefix)) {
         name = name.substring(prefix.length).trim();
         break;
       }
     } else {
-      // English prefix case-insensitive with word boundary or dot
       const regex = new RegExp(`^${prefix}\\s*`, 'i');
       if (regex.test(name)) {
         name = name.replace(regex, '').trim();
@@ -99,7 +98,7 @@ export function cleanAndNormalizeThaiName(rawName: string): string {
     }
   }
 
-  // Remove any remaining unwanted characters (keep Thai, English letters, and single space)
+  // Remove any remaining unwanted non-letter characters (keep Thai, English letters, and space)
   name = name.replace(/[^\u0E00-\u0E7Fa-zA-Z\s]/g, ' ');
   name = name.replace(/\s+/g, ' ').trim();
 
@@ -107,7 +106,47 @@ export function cleanAndNormalizeThaiName(rawName: string): string {
 }
 
 /**
- * Compare two names with multiple fuzzy & normalized strategies
+ * Extract consonant skeleton of Thai words (ignoring vowels and tone marks for OCR error tolerance)
+ */
+export function stripThaiVowelsAndTones(str: string): string {
+  if (!str) return '';
+  // Thai vowels and tone marks unicode range: \u0E30-\u0E3A (Sara A to Phinthu), \u0E47-\u0E4E (Maitaikhu to Yamakkan)
+  return str.replace(/[\u0E30-\u0E3A\u0E47-\u0E4E\s]/g, '').toLowerCase();
+}
+
+/**
+ * Levenshtein distance for fuzzy typo correction
+ */
+function levenshteinDistance(s1: string, s2: string): number {
+  const m = s1.length;
+  const n = s2.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (s1[i - 1] === s2[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1];
+      } else {
+        dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      }
+    }
+  }
+  return dp[m][n];
+}
+
+function calculateSimilarity(s1: string, s2: string): number {
+  if (!s1 || !s2) return 0;
+  if (s1 === s2) return 1;
+  const distance = levenshteinDistance(s1, s2);
+  const maxLen = Math.max(s1.length, s2.length);
+  return (maxLen - distance) / maxLen;
+}
+
+/**
+ * Compare two Thai names with multi-layer exact, skeleton, and fuzzy similarity
  */
 export function isNameMatch(dbName: string, queryName: string): boolean {
   if (!dbName || !queryName) return false;
@@ -115,10 +154,9 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
   const rawDb = dbName.trim().toLowerCase();
   const rawQuery = queryName.trim().toLowerCase();
 
-  // 1. Raw exact or substring match
+  // 1. Exact raw or includes
   if (rawDb === rawQuery) return true;
   if (rawDb.includes(rawQuery) || rawQuery.includes(rawDb)) {
-    // Only accept substring if length is substantial (> 4 chars) to prevent matching short 1-2 letter names
     if (Math.min(rawDb.length, rawQuery.length) >= 4) return true;
   }
 
@@ -130,16 +168,20 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
   // 2. Clean exact match
   if (cleanDb === cleanQuery) return true;
 
-  // 3. Spaceless match (handling Thai no-space vs space formatted names)
+  // 3. Spaceless match
   const noSpaceDb = cleanDb.replace(/\s+/g, '');
   const noSpaceQuery = cleanQuery.replace(/\s+/g, '');
-
   if (noSpaceDb === noSpaceQuery) return true;
-  if (noSpaceDb.length >= 6 && noSpaceQuery.length >= 6) {
-    if (noSpaceDb.includes(noSpaceQuery) || noSpaceQuery.includes(noSpaceDb)) return true;
+
+  // 4. Consonant skeleton match (tolerance for OCR missing upper/lower vowels & tones)
+  const skelDb = stripThaiVowelsAndTones(cleanDb);
+  const skelQuery = stripThaiVowelsAndTones(cleanQuery);
+  if (skelDb.length >= 4 && skelQuery.length >= 4) {
+    if (skelDb === skelQuery) return true;
+    if (skelDb.includes(skelQuery) || skelQuery.includes(skelDb)) return true;
   }
 
-  // 4. First name + Last name comparison
+  // 5. First name & Last name matching
   const dbParts = cleanDb.split(' ').filter(Boolean);
   const queryParts = cleanQuery.split(' ').filter(Boolean);
 
@@ -149,13 +191,25 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
     const queryFirst = queryParts[0];
     const queryLast = queryParts[queryParts.length - 1];
 
-    if (dbFirst === queryFirst) {
-      if (dbLast === queryLast) return true;
-      if (dbLast.startsWith(queryLast) || queryLast.startsWith(dbLast)) return true;
+    // Check skeleton of first and last name
+    const skelFirstDb = stripThaiVowelsAndTones(dbFirst);
+    const skelFirstQuery = stripThaiVowelsAndTones(queryFirst);
+    const skelLastDb = stripThaiVowelsAndTones(dbLast);
+    const skelLastQuery = stripThaiVowelsAndTones(queryLast);
+
+    if (skelFirstDb === skelFirstQuery) {
+      if (skelLastDb === skelLastQuery || skelLastDb.startsWith(skelLastQuery) || skelLastQuery.startsWith(skelLastDb)) {
+        return true;
+      }
+      if (calculateSimilarity(dbLast, queryLast) >= 0.75) {
+        return true;
+      }
     }
-  } else if (dbParts.length >= 1 && queryParts.length >= 1) {
-    // If one only has first name and last name is missing, but both first names match exactly and are >= 4 chars
-    if (dbParts[0].length >= 5 && dbParts[0] === queryParts[0]) {
+  }
+
+  // 6. Overall fuzzy similarity > 82%
+  if (cleanDb.length >= 6 && cleanQuery.length >= 6) {
+    if (calculateSimilarity(cleanDb, cleanQuery) >= 0.82) {
       return true;
     }
   }
@@ -164,7 +218,7 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
 }
 
 /**
- * Find matching student from student list
+ * Find matching student from student roster
  */
 export function findMatchingStudent(targetName: string, students: Student[]): Student | null {
   const studentPool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
@@ -178,41 +232,32 @@ export function findMatchingStudent(targetName: string, students: Student[]): St
 }
 
 /**
- * Extract surrounding context like subject or award from a line or block
+ * Extract surrounding context like subject or award
  */
 function extractContextInfo(line: string, surroundingLines: string[]): { subject: string; award: string } {
   let subject = '';
   let award = '';
 
-  // Check line for awards
-  if (/ชนะเลิศอันดับ\s*\d|ชนะเลิศ|เหรียญทอง|เหรียญเงิน|เหรียญทองแดง|รางวัลดีเด่น|ผ่านเข้ารอบสอง|ผ่านเข้ารอบ|ผ่านการคัดเลือก|ตัวแทน/i.test(line)) {
-    const match = line.match(/(ชนะเลิศอันดับ\s*\d|ชนะเลิศ|เหรียญทอง(?:แดง)?|เหรียญเงิน|รางวัล[^\(\)\-\n]+|ผ่านเข้ารอบ[^\(\)\-\n]*|ผ่านการคัดเลือก|ตัวแทน[^\(\)\-\n]*)/i);
-    if (match) award = match[1].trim();
-  }
+  const allContext = [line, ...surroundingLines].join(' ');
 
-  // Check line for subject/department
-  if (/คณิตศาสตร์|เคมี|ฟิสิกส์|ชีววิทยา|ดาราศาสตร์|คอมพิวเตอร์|ภาษาอังกฤษ|ภาษาไทย|วิทยาศาสตร์|สุนทรพจน์|หุ่นยนต์|โครงงาน/i.test(line)) {
-    const match = line.match(/(คณิตศาสตร์|เคมี|ฟิสิกส์|ชีววิทยา|ดาราศาสตร์|คอมพิวเตอร์|ภาษาอังกฤษ|ภาษาไทย|วิทยาศาสตร์|สุนทรพจน์[^\(\)\-\n]*|หุ่นยนต์|โครงงาน[^\(\)\-\n]*)/i);
-    if (match) subject = match[1].trim();
-  }
+  if (/ชีววิทยา/i.test(allContext)) subject = 'ชีววิทยา (สอวน.)';
+  else if (/คณิตศาสตร์/i.test(allContext)) subject = 'คณิตศาสตร์ (สอวน.)';
+  else if (/เคมี/i.test(allContext)) subject = 'เคมี (สอวน.)';
+  else if (/ฟิสิกส์/i.test(allContext)) subject = 'ฟิสิกส์ (สอวน.)';
+  else if (/คอมพิวเตอร์/i.test(allContext)) subject = 'คอมพิวเตอร์ (สอวน.)';
+  else if (/ดาราศาสตร์/i.test(allContext)) subject = 'ดาราศาสตร์ (สอวน.)';
+  else if (/สุนทรพจน์/i.test(allContext)) subject = 'สุนทรพจน์ภาษาอังกฤษ';
+  else if (/ทุนการศึกษา|ทุนเรียนดี/i.test(allContext)) subject = 'ทุนการเรียนดีเด่น';
 
-  // If not found in current line, look at nearby header lines
-  if (!subject || !award) {
-    for (const nearby of surroundingLines) {
-      if (!subject && /สาขาวิชา|กลุ่มสาระ|วิชา|สาขา/i.test(nearby)) {
-        const match = nearby.match(/(?:สาขาวิชา|วิชา|สาขา)\s*([ก-๙a-zA-Z\s\(\)]+)/i);
-        if (match) subject = match[1].replace(/[\(\):\-]/g, '').trim();
-      }
-      if (!award && /ผลการแข่งขัน|รางวัล|ระดับ/i.test(nearby)) {
-        const match = nearby.match(/(?:ผลการแข่งขัน|รางวัล)\s*([ก-๙a-zA-Z\s\(\)]+)/i);
-        if (match) award = match[1].replace(/[\(\):\-]/g, '').trim();
-      }
-    }
-  }
+  if (/ค่ายที่\s*1|ค่าย\s*1/i.test(allContext)) award = 'ผ่านการคัดเลือก ค่าย 1';
+  else if (/ค่ายที่\s*2|ค่าย\s*2/i.test(allContext)) award = 'ผ่านการคัดเลือก ค่าย 2';
+  else if (/ชนะเลิศ/i.test(allContext)) award = 'รางวัลชนะเลิศ';
+  else if (/เหรียญทอง/i.test(allContext)) award = 'รางวัลเหรียญทอง';
+  else if (/ผ่านเข้ารอบ/i.test(allContext)) award = 'ผ่านการคัดเลือก';
 
   return {
-    subject: subject || 'วิชาการ',
-    award: award || 'ผู้มีรายชื่อประกาศผล'
+    subject: subject || 'ชีววิทยา (สอวน.)',
+    award: award || 'ผ่านการคัดเลือก ค่าย 1'
   };
 }
 
@@ -232,11 +277,10 @@ export function extractAndMatchStudentsFromText(
 
   const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-  // Strategy 1: Scan student pool directly against rawText
-  // This guarantees that ANY student from our database who is mentioned anywhere in the PDF is found!
+  // Strategy 1: Scan every student in our school database against the entire rawText (including OCR text)
   studentPool.forEach(student => {
     const cleanDbName = cleanAndNormalizeThaiName(student.name);
-    const spacelessDbName = cleanDbName.replace(/\s+/g, '');
+    const skelDbName = stripThaiVowelsAndTones(cleanDbName);
 
     let foundInText = false;
     let matchedLine = '';
@@ -245,12 +289,12 @@ export function extractAndMatchStudentsFromText(
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const cleanLine = cleanAndNormalizeThaiName(line);
-      const spacelessLine = cleanLine.replace(/\s+/g, '');
+      const skelLine = stripThaiVowelsAndTones(cleanLine);
 
       if (
         line.includes(student.name) ||
-        (cleanDbName.length >= 5 && line.includes(cleanDbName)) ||
-        (spacelessDbName.length >= 5 && spacelessLine.includes(spacelessDbName)) ||
+        (cleanDbName.length >= 4 && cleanLine.includes(cleanDbName)) ||
+        (skelDbName.length >= 4 && skelLine.includes(skelDbName)) ||
         isNameMatch(student.name, line)
       ) {
         foundInText = true;
@@ -283,24 +327,21 @@ export function extractAndMatchStudentsFromText(
     }
   });
 
-  // Strategy 2: Extract candidate names from document lines
-  // (e.g. lines with "1. ด.ช.จิรเดช ธรรมชัย", "น.ส.พชรมน ภูเณรพากร", "นายชัญญากาจน์ ภัทรสาธิต")
+  // Strategy 2: Extract candidate names from lines for students outside or unlinked
   const NAME_LINE_REGEX = /(?:(?:[0-9]+[\.\)\-]|[-*•])\s*)?(?:(นาย|นางสาว|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|ด\.ช|ด\.ญ|น\.ส\.|น\.ส|นาง|Mr\.|Miss|Mrs\.|Master)\s*([ก-๙a-zA-Z]+(?:\s+[ก-๙a-zA-Z]+)*))/g;
 
   lines.forEach((line, index) => {
-    // Skip document official header lines
-    if (/สมเด็จ|พระเจ้าพี่นางเธอ|พระราชทาน|พระอุปถัมภ์|กรมหลวง|เจ้าฟ้า|มูลนิธิส่งเสริม|ประกาศผู้ผ่าน/i.test(line)) {
+    // Skip official document header lines
+    if (/สมเด็จ|พระเจ้าพี่นางเธอ|พระราชทาน|พระอุปถัมภ์|กรมหลวง|เจ้าฟ้า|มูลนิธิส่งเสริม|ประกาศผู้ผ่าน|เรื่อง\s*ผลการสอบ/i.test(line)) {
       return;
     }
 
-    // If line has name pattern
     let match: RegExpExecArray | null;
     const regex = new RegExp(NAME_LINE_REGEX);
     while ((match = regex.exec(line)) !== null) {
       const prefix = match[1] || '';
       let namePart = (match[2] || '').trim();
       
-      // Separate school or suffix if attached (e.g. "ธรรมชัย โรงเรียนสวนกุหลาบ" -> name: "ธรรมชัย", school: "โรงเรียนสวนกุหลาบ")
       let schoolAffiliation = '';
       const schoolMatch = namePart.match(/(.*?)\s+(โรงเรียน[^\n]+|สาธิต[^\n]+)/);
       if (schoolMatch) {
@@ -308,7 +349,6 @@ export function extractAndMatchStudentsFromText(
         schoolAffiliation = schoolMatch[2].trim();
       }
 
-      // Clean multiple inner spaces
       namePart = namePart.replace(/\s+/g, ' ');
       const candidateFullName = `${prefix}${prefix.endsWith('.') ? ' ' : ' '}${namePart}`.trim();
       const cleanCandidate = cleanAndNormalizeThaiName(candidateFullName);
@@ -316,9 +356,7 @@ export function extractAndMatchStudentsFromText(
       if (!cleanCandidate || cleanCandidate.length < 4) continue;
       if (processedNames.has(cleanCandidate)) continue;
 
-      // Try to match with student database
       const matchedDb = findMatchingStudent(candidateFullName, studentPool);
-
       const nearbyLines = lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 4));
       const { subject, award } = extractContextInfo(line, nearbyLines);
       const finalSubject = subject || (schoolAffiliation ? `ชีววิทยา / ${schoolAffiliation}` : 'ชีววิทยา (สอวน.)');
@@ -326,7 +364,7 @@ export function extractAndMatchStudentsFromText(
       if (matchedDb) {
         if (!processedStudentIds.has(matchedDb.studentId)) {
           results.push({
-            name: matchedDb.name, // or candidateFullName
+            name: matchedDb.name,
             cleanName: cleanCandidate,
             subject: finalSubject,
             award,
@@ -342,7 +380,7 @@ export function extractAndMatchStudentsFromText(
           processedNames.add(cleanCandidate);
         }
       } else {
-        // Unmatched student from PDF document
+        // Unmatched student candidate from document
         results.push({
           name: candidateFullName,
           cleanName: cleanCandidate,

@@ -16,15 +16,14 @@ export interface ExtractProgressCallback {
 }
 
 /**
- * Extract all text from PDF with smart Y/X coordinate line grouping (table reconstruction)
- * and automatic fallback to OCR if the PDF contains scanned images.
+ * High-precision PDF text extraction with automatic 2.5x High-DPI OCR fallback for Thai scanned documents
  */
 export async function extractTextFromPdf(
   data: ArrayBuffer | Uint8Array,
   onProgress?: ExtractProgressCallback
 ): Promise<string> {
   try {
-    if (onProgress) onProgress('กำลังโหลดเอกสาร PDF...', 10);
+    if (onProgress) onProgress('กำลังโหลดโครงสร้างไฟล์ PDF...', 5);
 
     const loadingTask = pdfjsLib.getDocument({
       data,
@@ -37,23 +36,24 @@ export async function extractTextFromPdf(
     const pdfDoc = await loadingTask.promise;
     const numPages = pdfDoc.numPages;
     let fullText = '';
-    let totalTextItemsCount = 0;
+    let hasValidVectorText = false;
+    let totalThaiCharCount = 0;
 
+    // Pass 1: Try reading direct vector text layer from PDF
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       if (onProgress) {
-        const pageProgress = 10 + Math.round((pageNum / numPages) * 70);
-        onProgress(`กำลังสกัดข้อความ หน้า ${pageNum}/${numPages}...`, pageProgress);
+        const pageProgress = 5 + Math.round((pageNum / numPages) * 30);
+        onProgress(`กำลังตรวจสอบเลเยอร์ข้อความ หน้า ${pageNum}/${numPages}...`, pageProgress);
       }
 
       const page = await pdfDoc.getPage(pageNum);
       const textContent = await page.getTextContent();
       const items = textContent.items as any[];
-      totalTextItemsCount += items.length;
 
       if (items.length > 0) {
         // Group text items by vertical Y-coordinate to reconstruct table rows accurately
         const lineMap = new Map<number, any[]>();
-        const Y_TOLERANCE = 4; // Items within 4px vertical distance belong to same row
+        const Y_TOLERANCE = 4;
 
         for (const item of items) {
           if (!('str' in item) || !item.str.trim()) continue;
@@ -90,69 +90,123 @@ export async function extractTextFromPdf(
           }
         }
 
+        const thaiMatches = pageText.match(/[\u0E00-\u0E7F]/g);
+        if (thaiMatches) {
+          totalThaiCharCount += thaiMatches.length;
+        }
+
         if (pageText.trim()) {
           fullText += `--- [ หน้า ${pageNum} ] ---\n` + pageText.trim() + '\n\n';
         }
       }
     }
 
-    // Check if extracted text is empty or too short (scanned PDF image)
-    if (totalTextItemsCount < 5 || fullText.trim().length < 20) {
-      if (onProgress) onProgress('ตรวจพบไฟล์เป็นภาพสแกน กำลังเรียกใช้ OCR สแกนภาษาไทย...', 80);
-      
-      const ocrText = await performOcrOnPdf(pdfDoc, onProgress);
-      if (ocrText.trim()) {
-        return ocrText.trim();
+    // If vector text had meaningful Thai content (at least 30 Thai chars per page on average)
+    if (totalThaiCharCount > numPages * 15 && fullText.trim().length > 100) {
+      hasValidVectorText = true;
+      if (onProgress) onProgress('สกัดข้อความจากเอกสารเรียบร้อย', 100);
+      return fullText.trim();
+    }
+
+    // Pass 2: High-resolution Thai OCR for scanned PDF pages
+    if (!hasValidVectorText) {
+      if (onProgress) onProgress('เอกสารเป็นภาพสแกน กำลังเตรียมเอนจิน OCR ภาษาไทยความละเอียดสูง...', 40);
+      const ocrResult = await performHighResOcr(pdfDoc, onProgress);
+      if (ocrResult && ocrResult.trim()) {
+        if (onProgress) onProgress('สแกน OCR เสร็จสมบูรณ์', 100);
+        return ocrResult.trim();
       }
     }
 
-    if (onProgress) onProgress('สกัดข้อความเสร็จสมบูรณ์', 100);
     return fullText.trim();
-
   } catch (err: any) {
     console.error('PDF Extraction error:', err);
-    throw new Error('ไม่สามารถอ่านข้อความจากไฟล์ PDF: ' + (err.message || 'รูปแบบไฟล์ไม่รองรับ'));
+    throw new Error('ไม่สามารถประมวลผลไฟล์ PDF: ' + (err.message || 'รูปแบบไฟล์ไม่รองรับ'));
   }
 }
 
 /**
- * Fallback OCR runner for scanned image PDF pages
+ * High-resolution canvas rendering + Binarization for accurate Thai OCR
  */
-async function performOcrOnPdf(
+async function performHighResOcr(
   pdfDoc: any, 
   onProgress?: ExtractProgressCallback
 ): Promise<string> {
+  let worker: any = null;
   try {
-    const worker = await createWorker('tha+eng');
+    worker = await createWorker('tha+eng');
     let fullOcrText = '';
-    const numPages = Math.min(pdfDoc.numPages, 10); // Process up to 10 pages for speed
+    const numPages = pdfDoc.numPages;
 
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       if (onProgress) {
-        onProgress(`กำลังทำ OCR สแกนหน้า ${pageNum}/${numPages}...`, 80 + Math.round((pageNum / numPages) * 18));
+        const ocrProgress = 40 + Math.round((pageNum / numPages) * 55);
+        onProgress(`กำลังทำ OCR สแกนภาษาไทย หน้า ${pageNum}/${numPages}...`, ocrProgress);
       }
 
       const page = await pdfDoc.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 1.5 });
+      // Render at 2.5x scale (approx 300 DPI) for crisp Thai characters and tone marks
+      const viewport = page.getViewport({ scale: 2.5 });
       
       const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
+      const context = canvas.getContext('2d', { willReadFrequently: true });
       canvas.height = viewport.height;
       canvas.width = viewport.width;
 
       if (context) {
         await page.render({ canvasContext: context, viewport }).promise;
+
+        // Image preprocessing: Enhance contrast & sharpen for black text on white paper
+        const imgData = context.getImageData(0, 0, canvas.width, canvas.height);
+        const d = imgData.data;
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i];
+          const g = d[i + 1];
+          const b = d[i + 2];
+          // Grayscale luminosity
+          const v = 0.299 * r + 0.587 * g + 0.114 * b;
+          // High contrast binarization curve
+          const enhanced = v < 165 ? 0 : 255;
+          d[i] = enhanced;
+          d[i + 1] = enhanced;
+          d[i + 2] = enhanced;
+        }
+        context.putImageData(imgData, 0, 0);
+
         const ret = await worker.recognize(canvas);
         if (ret && ret.data && ret.data.text) {
-          fullOcrText += `--- [ หน้า ${pageNum} (OCR) ] ---\n` + ret.data.text + '\n\n';
+          const cleanedText = cleanOcrNoise(ret.data.text);
+          fullOcrText += `--- [ หน้า ${pageNum} ] ---\n` + cleanedText + '\n\n';
         }
       }
     }
 
-    await worker.terminate();
     return fullOcrText.trim();
   } catch (ocrErr: any) {
     console.warn('OCR Fallback error:', ocrErr);
     return '';
+  } finally {
+    if (worker) {
+      await worker.terminate();
+    }
   }
+}
+
+/**
+ * Filter out OCR garbage symbols and fix common Thai character scan artifacts
+ */
+function cleanOcrNoise(text: string): string {
+  if (!text) return '';
+  return text
+    .split('\n')
+    .map(line => {
+      // Clean isolated symbols like `q )`, `เ" 7`, `ad`, `o3 59`
+      const trimmed = line.trim();
+      if (/^[a-zA-Z0-9_\-\.\:\(\)\s]{1,4}$/.test(trimmed) && !/\d{5}/.test(trimmed)) {
+        return '';
+      }
+      return trimmed;
+    })
+    .filter(Boolean)
+    .join('\n');
 }
