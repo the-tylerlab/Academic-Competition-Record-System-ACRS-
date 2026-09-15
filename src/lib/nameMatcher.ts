@@ -324,11 +324,11 @@ function extractContextInfo(line: string, surroundingLines: string[]): { subject
 }
 
 /**
- * Scan raw text against students database focusing on MATCHED students
- * Uses 3-layer matching:
- * 1) Full-document consonant skeleton & spaceless search (handles OCR line breaks, dropped vowels, Thai digits, broken spaces)
- * 2) Fuzzy Levenshtein skeleton search for damaged OCR characters
- * 3) Detection of school name rows (โรงเรียนอัสสัมชัญธนบุรี / อสธ. / ACT)
+ * Scan raw text against students database focusing strictly on MATCHED students
+ * Principles:
+ * 1) NEVER match by numbers/ID (document numbers are competition seats/rankings, not school IDs)
+ * 2) Match strictly by First Name AND Last Name appearing TOGETHER on the same row/block
+ * 3) Detect students affiliated with "โรงเรียนอัสสัมชัญธนบุรี" / "อัสสัมชัญ ธนบุรี" / "ACT"
  */
 export function extractAndMatchStudentsFromText(
   rawText: string,
@@ -342,13 +342,9 @@ export function extractAndMatchStudentsFromText(
   if (!rawText || !rawText.trim()) return [];
 
   const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const fullDocSkel = stripThaiVowelsAndTones(rawText);
-  const fullDocNoSpace = rawText.replace(/\s+/g, '');
-
-  // Global context detection from the whole document
   const defaultContext = extractContextInfo(rawText.slice(0, 500), lines.slice(0, 10));
 
-  // Strategy 1: Scan student roster against document (Global Skeleton & Proximity Search)
+  // Strategy 1: Match students whose First Name AND Last Name appear together on the same line
   studentPool.forEach(student => {
     const cleanDbName = cleanAndNormalizeThaiName(student.name);
     const { firstName, lastName } = splitFirstAndLastName(student.name);
@@ -356,60 +352,40 @@ export function extractAndMatchStudentsFromText(
     const skelFirst = stripThaiVowelsAndTones(firstName);
     const skelLast = stripThaiVowelsAndTones(lastName);
 
-    if (!cleanDbName || cleanDbName.length < 3) return;
+    if (!cleanDbName || cleanDbName.length < 4 || !firstName || !lastName) return;
     if (processedStudentIds.has(student.studentId)) return;
 
     let foundInText = false;
     let matchedLine = '';
     let lineIndex = -1;
 
-    // 1. Direct or Spaceless text match in full document
-    const studentNoSpace = (firstName + lastName).replace(/\s+/g, '');
-    if (rawText.includes(cleanDbName) || (studentNoSpace.length >= 4 && fullDocNoSpace.includes(studentNoSpace))) {
-      foundInText = true;
-    }
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineNoSpace = line.replace(/\s+/g, '');
+      const skelLine = stripThaiVowelsAndTones(line);
 
-    // 2. Global Consonant Skeleton match (handles OCR errors, dropped vowels, spacing artifacts)
-    if (!foundInText && skelDbName.length >= 4 && fullDocSkel.includes(skelDbName)) {
-      foundInText = true;
-    }
+      // Condition A: Full First + Last Name exact string on this line
+      const fullTargetNoSpace = (firstName + lastName).replace(/\s+/g, '');
+      const hasDirectFull = fullTargetNoSpace.length >= 4 && lineNoSpace.includes(fullTargetNoSpace);
 
-    // 3. Proximity Skeleton match (first name and last name appearing within 60 characters of each other)
-    if (!foundInText && skelFirst.length >= 3 && skelLast.length >= 3) {
-      const firstIdx = fullDocSkel.indexOf(skelFirst);
-      if (firstIdx !== -1) {
-        const windowAfter = fullDocSkel.substring(firstIdx, firstIdx + skelFirst.length + 60);
-        if (windowAfter.includes(skelLast)) {
-          foundInText = true;
-        }
-      }
-    }
+      // Condition B: Full First + Last Name consonant skeleton on this line
+      const hasFullSkel = skelDbName.length >= 4 && skelLine.includes(skelDbName);
 
-    // 4. Fuzzy Skeleton Match with Levenshtein distance (for severe OCR character recognition noise)
-    if (!foundInText && skelFirst.length >= 4 && skelLast.length >= 4) {
-      const firstMatched = fuzzySubstringMatch(fullDocSkel, skelFirst, 1);
-      const lastMatched = fuzzySubstringMatch(fullDocSkel, skelLast, 1);
-      if (firstMatched && lastMatched) {
+      // Condition C: BOTH First Name skeleton AND Last Name skeleton appear on this line
+      const hasBothFirstAndLast = (skelFirst.length >= 3 && skelLine.includes(skelFirst)) && 
+                                  (skelLast.length >= 3 && skelLine.includes(skelLast));
+
+      if (hasDirectFull || hasFullSkel || hasBothFirstAndLast) {
         foundInText = true;
+        matchedLine = line;
+        lineIndex = i;
+        break;
       }
     }
 
-    // Find the closest line for context if found
     if (foundInText) {
-      for (let i = 0; i < lines.length; i++) {
-        const lSkel = stripThaiVowelsAndTones(lines[i]);
-        if (lSkel.includes(skelFirst) || lSkel.includes(skelLast)) {
-          matchedLine = lines[i];
-          lineIndex = i;
-          break;
-        }
-      }
-
-      const nearbyLines = lineIndex !== -1 
-        ? lines.slice(Math.max(0, lineIndex - 3), Math.min(lines.length, lineIndex + 4))
-        : lines.slice(0, 10);
-
-      const context = extractContextInfo(matchedLine || rawText.slice(0, 300), nearbyLines);
+      const nearbyLines = lines.slice(Math.max(0, lineIndex - 3), Math.min(lines.length, lineIndex + 4));
+      const context = extractContextInfo(matchedLine, nearbyLines);
 
       results.push({
         name: cleanDbName,
@@ -430,7 +406,7 @@ export function extractAndMatchStudentsFromText(
     }
   });
 
-  // Strategy 2: Detect any lines that mention "โรงเรียนอัสสัมชัญธนบุรี" / "อัสสัมชัญ ธนบุรี"
+  // Strategy 2: Detect rows affiliated with "โรงเรียนอัสสัมชัญธนบุรี" / "อัสสัมชัญ ธนบุรี" / "ACT"
   lines.forEach((line, index) => {
     if (ACT_SCHOOL_REGEX.test(line)) {
       let candidateName = cleanAndNormalizeThaiName(line);
@@ -469,7 +445,7 @@ export function extractAndMatchStudentsFromText(
           processedNames.add(candidateName);
         }
       } else {
-        // ACT Student found from school name in PDF
+        // ACT Student found from school name in PDF (even if not yet in database)
         results.push({
           name: candidateName,
           cleanName: candidateName,
