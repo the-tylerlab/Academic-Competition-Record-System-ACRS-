@@ -65,7 +65,7 @@ const TITLE_PREFIXES = [
 ];
 
 // Target school patterns (Assumption College Thonburi / อัสสัมชัญธนบุรี)
-export const ACT_SCHOOL_REGEX = /(?:โรงเรียน|ร\.ร\.)?\s*อัสสัมชัญ[\s\-]*ธนบุรี|อัสสัมชัญธนบุรี|อสธ\.?|\bACT\b|Assumption\s*College\s*Thonburi/i;
+export const ACT_SCHOOL_REGEX = /(?:โรงเรียน|ร\.ร\.)?\s*อัส[\sั]*สัม[\s]*ชัญ[\s]*(?:ธน[\s]*บุรี)?|อสธ\.?|\bACT\b|Assumption/i;
 
 /**
  * Remove all title prefixes, numbers, symbols, and extra whitespace
@@ -75,17 +75,19 @@ export function cleanAndNormalizeThaiName(rawName: string): string {
   if (!rawName) return '';
 
   let name = rawName.trim()
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ')
     .replace(/\([^)]*\)/g, ' ')
     .replace(/\[[^\]]*\]/g, ' ')
     .replace(/\{[^}]*\}/g, ' ')
     // Remove school names starting with โรงเรียน, ร.ร., อัสสัมชัญ, Assumption
     .replace(/(?:โรงเรียน|ร\.ร\.)\s*[^\n\t\r]+/g, ' ')
-    .replace(/อัสสัมชัญ[\s\-]*ธนบุรี[^\n\t\r]*/gi, ' ')
-    .replace(/Assumption\s*College[^\n\t\r]*/gi, ' ')
+    .replace(/อัส[\sั]*สัม[\s]*ชัญ[^\n\t\r]*/gi, ' ')
+    .replace(/Assumption[^\n\t\r]*/gi, ' ')
     .replace(/\s+(?:สวนกุหลาบ|เทพศิรินทร์|บดินทรเดชา|เตรียมอุดม|สามเสน|สตรีวิทยา|มหิดลวิทยานุสรณ์|กรุงเทพคริสเตียน|เซนต์คาเบรียล|เซนต์ดอมินิก|มาแตร์เดอี)[^\n\t\r]*/gi, ' ')
-    // Remove leading numbers, ranks, student IDs (e.g., '7 31166', '1.', '1)', 'No. 1')
-    .replace(/^(\d+[\.\)\-:]*|\(+\d+\)+|[-*•#]+|no\.?\s*\d+)\s*/i, '')
+    // Remove leading numbers, Thai/Arabic ranks, student IDs (e.g., '7 31166', '๗ ๓๑๑๖๖', '1.', '1)', 'No. 1')
+    .replace(/^(\d+[\.\)\-:]*|[๐-๙]+[\.\)\-:]*|\(+\d+\)+|\(+[๐-๙]+\)+|[-*•#]+|no\.?\s*\d+)\s*/i, '')
     .replace(/^\d{4,8}\s+/, '')
+    .replace(/^[๐-๙]{4,8}\s+/, '')
     .replace(/\s*-\s*.*$/, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -184,7 +186,7 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
     const skelLastDb = stripThaiVowelsAndTones(dbLast);
     const skelLastQuery = stripThaiVowelsAndTones(queryLast);
 
-    if (skelFirstDb === skelFirstQuery) {
+    if (skelFirstDb === skelFirstQuery && skelFirstDb.length >= 3) {
       if (skelLastDb === skelLastQuery || skelLastDb.startsWith(skelLastQuery) || skelLastQuery.startsWith(skelLastDb)) {
         return true;
       }
@@ -199,12 +201,44 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
  */
 export function findMatchingStudent(targetName: string, students: Student[]): Student | null {
   const studentPool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
+  const cleanTarget = cleanAndNormalizeThaiName(targetName);
+  const skelTarget = stripThaiVowelsAndTones(cleanTarget);
 
+  // 1. Direct match
   for (const st of studentPool) {
     if (isNameMatch(st.name, targetName)) {
       return st;
     }
   }
+
+  // 2. Full Skeleton match
+  if (skelTarget.length >= 4) {
+    for (const st of studentPool) {
+      const cleanDb = cleanAndNormalizeThaiName(st.name);
+      const skelDb = stripThaiVowelsAndTones(cleanDb);
+      if (skelDb === skelTarget || skelDb.includes(skelTarget) || skelTarget.includes(skelDb)) {
+        return st;
+      }
+    }
+  }
+
+  // 3. First + Last name skeleton match
+  const parts = cleanTarget.split(' ').filter(Boolean);
+  if (parts.length >= 2) {
+    const firstSkel = stripThaiVowelsAndTones(parts[0]);
+    const lastSkel = stripThaiVowelsAndTones(parts.slice(1).join(''));
+    if (firstSkel.length >= 3 && lastSkel.length >= 3) {
+      for (const st of studentPool) {
+        const { firstName, lastName } = splitFirstAndLastName(st.name);
+        const dbFirstSkel = stripThaiVowelsAndTones(firstName);
+        const dbLastSkel = stripThaiVowelsAndTones(lastName);
+        if (dbFirstSkel === firstSkel && (dbLastSkel === lastSkel || dbLastSkel.startsWith(lastSkel) || lastSkel.startsWith(dbLastSkel))) {
+          return st;
+        }
+      }
+    }
+  }
+
   return null;
 }
 
