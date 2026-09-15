@@ -230,7 +230,8 @@ function extractContextInfo(line: string, surroundingLines: string[]): { subject
 }
 
 /**
- * Scan raw text against students database focusing strictly on First Name + Last Name (ชื่อ-สกุล)
+ * Scan raw text against students database focusing strictly on MATCHED students
+ * ONLY returns students who exist in the database and appear in the document
  */
 export function extractAndMatchStudentsFromText(
   rawText: string,
@@ -245,7 +246,7 @@ export function extractAndMatchStudentsFromText(
 
   const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-  // Strategy 1: Scan every student in our school roster against the document text (Matching strictly by First Name + Last Name)
+  // Scan every student in our school roster against the document text (Matching strictly by First Name + Last Name)
   studentPool.forEach(student => {
     const cleanDbName = cleanAndNormalizeThaiName(student.name);
     const { firstName, lastName } = splitFirstAndLastName(student.name);
@@ -254,6 +255,7 @@ export function extractAndMatchStudentsFromText(
     const skelLast = stripThaiVowelsAndTones(lastName);
 
     if (!cleanDbName || cleanDbName.length < 3) return;
+    if (processedStudentIds.has(student.studentId)) return;
 
     let foundInText = false;
     let matchedLine = '';
@@ -310,77 +312,6 @@ export function extractAndMatchStudentsFromText(
 
       processedStudentIds.add(student.studentId);
       processedNames.add(cleanDbName);
-    }
-  });
-
-  // Strategy 2: Extract candidate names from document lines for unlinked/external participants
-  const NAME_LINE_REGEX = /(?:(?:[0-9]+[\.\)\-]|[-*•])\s*)?(?:(นาย|นางสาว|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|ด\.ช|ด\.ญ|น\.ส\.|น\.ส|นาง|Mr\.|Miss|Mrs\.|Master)\s*([ก-๙a-zA-Z]+(?:\s+[ก-๙a-zA-Z]+)*))/g;
-
-  lines.forEach((line, index) => {
-    // Skip official document header lines
-    if (/สมเด็จ|พระเจ้าพี่นางเธอ|พระราชทาน|พระอุปถัมภ์|กรมหลวง|เจ้าฟ้า|มูลนิธิส่งเสริม|ประกาศผู้ผ่าน|เรื่อง\s*ผลการสอบ/i.test(line)) {
-      return;
-    }
-
-    let match: RegExpExecArray | null;
-    const regex = new RegExp(NAME_LINE_REGEX);
-    while ((match = regex.exec(line)) !== null) {
-      let namePart = (match[2] || '').trim();
-      
-      let schoolAffiliation = '';
-      const schoolMatch = namePart.match(/(.*?)\s+(โรงเรียน[^\n]+|สาธิต[^\n]+)/);
-      if (schoolMatch) {
-        namePart = schoolMatch[1].trim();
-        schoolAffiliation = schoolMatch[2].trim();
-      }
-
-      namePart = namePart.replace(/\s+/g, ' ');
-      // Pure First Name - Last Name without prefix
-      const pureCandidateName = cleanAndNormalizeThaiName(namePart);
-
-      if (!pureCandidateName || pureCandidateName.length < 4) continue;
-      if (processedNames.has(pureCandidateName)) continue;
-
-      const matchedDb = findMatchingStudent(pureCandidateName, studentPool);
-      const nearbyLines = lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 4));
-      const { subject, award } = extractContextInfo(line, nearbyLines);
-      const finalSubject = subject || (schoolAffiliation ? `ชีววิทยา / ${schoolAffiliation}` : 'ชีววิทยา (สอวน.)');
-
-      if (matchedDb) {
-        if (!processedStudentIds.has(matchedDb.studentId)) {
-          const cleanMatchedName = cleanAndNormalizeThaiName(matchedDb.name);
-          results.push({
-            name: cleanMatchedName,
-            cleanName: pureCandidateName,
-            subject: finalSubject,
-            award,
-            isMatched: true,
-            studentId: matchedDb.studentId,
-            grade: matchedDb.grade,
-            room: matchedDb.room,
-            program: matchedDb.program,
-            email: matchedDb.email || '',
-            matchedStudent: matchedDb
-          });
-          processedStudentIds.add(matchedDb.studentId);
-          processedNames.add(pureCandidateName);
-        }
-      } else {
-        // Unmatched student candidate from document (Display as pure First Name + Last Name)
-        results.push({
-          name: pureCandidateName,
-          cleanName: pureCandidateName,
-          subject: finalSubject,
-          award,
-          isMatched: false,
-          studentId: 'ไม่พบข้อมูล',
-          grade: 'N/A',
-          room: 'N/A',
-          program: 'Unknown',
-          email: 'N/A'
-        });
-        processedNames.add(pureCandidateName);
-      }
     }
   });
 

@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Upload, ChevronDown, CheckCircle2, AlertCircle, Plus, FileText, Globe, RefreshCw, Sparkles, BookOpen, Search } from 'lucide-react';
+import { Upload, ChevronDown, CheckCircle2, AlertCircle, Plus, FileText, Globe, RefreshCw, Sparkles, BookOpen } from 'lucide-react';
 import { MOCK_SOURCES, DEFAULT_STUDENTS } from '../mockData';
 import { extractTextFromPdf } from '../lib/pdfExtractor';
 import { extractAndMatchStudentsFromText, findMatchingStudent, cleanAndNormalizeThaiName } from '../lib/nameMatcher';
@@ -24,9 +24,6 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
   // Real scanned text from file or user input
   const [scannedText, setScannedText] = useState('');
   const [foundStudentsList, setFoundStudentsList] = useState<any[]>([]);
-  const [tableFilter, setTableFilter] = useState<'all' | 'matched'>('all');
-  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState<number | null>(null);
-  const [suggestionQuery, setSuggestionQuery] = useState('');
 
   const [isFileReading, setIsFileReading] = useState(false);
   const [readingStatus, setReadingStatus] = useState({ message: '', percent: 0 });
@@ -122,51 +119,33 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           setIsProcessing(false);
           setSearchCompleted(true);
 
-          // SMART MATCHING & CURRICULUM CLASSIFICATION
+          // SMART MATCHING: ONLY RETURN MATCHED STUDENTS FROM DATABASE
           let processedList = extractAndMatchStudentsFromText(textToProcess, activeStudentsPool);
 
+          // If activeSource had mock parsed students, match them strictly
           if (selectedSource?.parsedStudents && Array.isArray(selectedSource.parsedStudents)) {
-            const existingStudentIds = new Set(processedList.filter(s => s.isMatched).map(s => s.studentId));
-            const existingNames = new Set(processedList.map(s => cleanAndNormalizeThaiName(s.name)));
+            const existingStudentIds = new Set(processedList.map(s => s.studentId));
 
             selectedSource.parsedStudents.forEach((parsed: any) => {
-              const cleanName = cleanAndNormalizeThaiName(parsed.name);
-              if (!existingNames.has(cleanName)) {
-                const dbStudent = findMatchingStudent(parsed.name, activeStudentsPool);
-                if (dbStudent) {
-                  if (!existingStudentIds.has(dbStudent.studentId)) {
-                    processedList.push({
-                      name: dbStudent.name || parsed.name,
-                      subject: parsed.subject || 'ชีววิทยา (สอวน.)',
-                      award: parsed.award || 'ผ่านการคัดเลือก',
-                      isMatched: true,
-                      studentId: dbStudent.studentId,
-                      grade: dbStudent.grade,
-                      room: dbStudent.room,
-                      program: dbStudent.program,
-                      email: dbStudent.email || ''
-                    });
-                    existingStudentIds.add(dbStudent.studentId);
-                  }
-                } else {
-                  processedList.push({
-                    name: parsed.name,
-                    subject: parsed.subject || 'วิชาการ',
-                    award: parsed.award || 'ผ่านการคัดเลือก',
-                    isMatched: false,
-                    studentId: "ไม่พบข้อมูล",
-                    grade: "N/A",
-                    room: "N/A",
-                    program: "Unknown",
-                    email: "N/A"
-                  });
-                }
-                existingNames.add(cleanName);
+              const dbStudent = findMatchingStudent(parsed.name, activeStudentsPool);
+              if (dbStudent && !existingStudentIds.has(dbStudent.studentId)) {
+                processedList.push({
+                  name: cleanAndNormalizeThaiName(dbStudent.name),
+                  cleanName: cleanAndNormalizeThaiName(dbStudent.name),
+                  subject: parsed.subject || 'ชีววิทยา (สอวน.)',
+                  award: parsed.award || 'ผ่านการคัดเลือก',
+                  isMatched: true,
+                  studentId: dbStudent.studentId,
+                  grade: dbStudent.grade,
+                  room: dbStudent.room,
+                  program: dbStudent.program,
+                  email: dbStudent.email || ''
+                });
+                existingStudentIds.add(dbStudent.studentId);
               }
             });
           }
 
-          setTableFilter('all');
           setFoundStudentsList(processedList);
           return 100;
         }
@@ -176,12 +155,8 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
   };
 
   const handleSaveSearchRecord = async () => {
-    const studentsToSave = tableFilter === 'matched' 
-      ? foundStudentsList.filter(s => s.isMatched)
-      : foundStudentsList;
-
-    if (studentsToSave.length === 0) {
-      alert("ไม่พบรายการนักเรียนสำหรับบันทึก กรุณาเพิ่มหรือระบุรหัสนักเรียนก่อน");
+    if (foundStudentsList.length === 0) {
+      alert("ไม่พบรายการนักเรียนสำหรับบันทึก กรุณาเพิ่มหรือประมวลผลข้อมูลก่อน");
       return;
     }
 
@@ -192,7 +167,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
       sourceType: inputType,
       sourceName: inputType === 'url' ? (customUrl || selectedSource?.webUrl || 'เว็บไซต์ประกาศ') : (selectedSource?.fileName || selectedSource?.name || 'ไฟล์ประกาศ PDF'),
       recordedBy: role === 'academic' ? 'ฝ่ายวิชาการ' : 'ครูผู้ส่งผลงาน',
-      students: studentsToSave,
+      students: foundStudentsList,
       status: "รออนุมัติจัดเก็บ"
     };
 
@@ -210,7 +185,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
         updated[index] = {
           ...updated[index],
           isMatched: true,
-          name: match.name,
+          name: cleanAndNormalizeThaiName(match.name),
           grade: match.grade,
           room: match.room,
           program: match.program,
@@ -226,34 +201,17 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
         updated[index] = {
           ...updated[index],
           isMatched: true,
+          name: cleanAndNormalizeThaiName(match.name),
           studentId: match.studentId,
           grade: match.grade,
           room: match.room,
           program: match.program,
           email: match.email || ''
         };
-      } else {
-        updated[index].isMatched = false;
       }
     }
 
     setFoundStudentsList(updated);
-  };
-
-  const linkStudentFromDb = (index: number, dbStudent: any) => {
-    const updated = [...foundStudentsList];
-    updated[index] = {
-      ...updated[index],
-      name: dbStudent.name,
-      studentId: dbStudent.studentId,
-      grade: dbStudent.grade,
-      room: dbStudent.room,
-      program: dbStudent.program,
-      email: dbStudent.email || '',
-      isMatched: true
-    };
-    setFoundStudentsList(updated);
-    setActiveSuggestionIndex(null);
   };
 
   const deleteTemporaryItem = (index: number) => {
@@ -265,7 +223,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
       name: "",
       subject: "ชีววิทยา (สอวน.)",
       award: "ผ่านการคัดเลือก ค่าย 1",
-      isMatched: false,
+      isMatched: true,
       studentId: "",
       grade: "ม.4",
       room: "1",
@@ -275,19 +233,6 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
     setFoundStudentsList([newItem, ...foundStudentsList]);
   };
 
-  const matchedStudents = foundStudentsList.filter(s => s.isMatched);
-  const unmatchedStudents = foundStudentsList.filter(s => !s.isMatched);
-  const displayedStudents = tableFilter === 'matched' ? matchedStudents : foundStudentsList;
-
-  // Autocomplete matching students
-  const filteredSuggestions = suggestionQuery.trim()
-    ? activeStudentsPool.filter(s => 
-        s.name.includes(suggestionQuery) || 
-        s.studentId.includes(suggestionQuery) ||
-        cleanAndNormalizeThaiName(s.name).includes(cleanAndNormalizeThaiName(suggestionQuery))
-      ).slice(0, 6)
-    : activeStudentsPool.slice(0, 6);
-
   return (
     <div className="flex flex-col gap-6 animate-fade-in text-slate-900">
       <div className="bg-white p-6 md:p-8 rounded-xl border border-slate-200 shadow-2xs">
@@ -295,15 +240,15 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
         <div className="mb-6 border-b border-slate-100 pb-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-              <span>ค้นหาเลขประจำตัวและจัดแยกหลักสูตรอัตโนมัติ</span>
+              <span>ค้นหาและจับคู่นักเรียนในฐานข้อมูลโรงเรียน</span>
             </h3>
             <p className="text-base text-slate-500 mt-1">
-              อัปโหลดไฟล์ประกาศผล PDF ระบบจะสกัดรายชื่อทั้งหมดจากเอกสารและเทียบกับฐานข้อมูลโรงเรียน ({activeStudentsPool.length} คน) ให้อัตโนมัติ
+              สแกนรายชื่อจากเอกสารประกาศผล และแสดงเฉพาะนักเรียนที่ตรงกับฐานข้อมูลของโรงเรียน ({activeStudentsPool.length} คน)
             </p>
           </div>
           <div className="text-sm font-semibold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 flex items-center gap-2 w-fit">
             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            ฐานข้อมูลนักเรียนในระบบ: <strong className="text-slate-900">{activeStudentsPool.length} คน</strong>
+            ฐานข้อมูลนักเรียน: <strong className="text-slate-900">{activeStudentsPool.length} คน</strong>
           </div>
         </div>
 
@@ -320,7 +265,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
             </span>
             <span className="text-slate-300">&rarr;</span>
             <span className={`px-2.5 py-1 rounded transition-colors ${searchCompleted ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-500'}`}>
-              3. ตรวจสอบการจับคู่
+              3. ตรวจสอบรายชื่อที่พบ
             </span>
             <span className="text-slate-300">&rarr;</span>
             <span className="px-2.5 py-1 rounded bg-slate-200 text-slate-500">
@@ -521,19 +466,12 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
               <div className="lg:col-span-6 flex flex-col">
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">
-                    ผลการจำแนกและจับคู่กับฐานข้อมูลโรงเรียน
+                    ผลการจำแนกเฉพาะนักเรียนที่ตรงกับฐานข้อมูล
                   </label>
                   {searchCompleted && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                        พบในโรงเรียน {matchedStudents.length} คน
-                      </span>
-                      {unmatchedStudents.length > 0 && (
-                        <span className="text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                          อื่นๆ ในประกาศ {unmatchedStudents.length} คน
-                        </span>
-                      )}
-                    </div>
+                    <span className="text-xs font-bold px-2.5 py-1 rounded-md bg-emerald-100 text-emerald-800">
+                      พบในโรงเรียน {foundStudentsList.length} คน
+                    </span>
                   )}
                 </div>
 
@@ -553,60 +491,43 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                   {!isProcessing && !searchCompleted && (
                     <div className="h-full flex flex-col items-center justify-center p-6 text-center text-slate-400">
                       <p className="text-sm font-bold text-slate-600">กดปุ่ม "เริ่มประมวลผลจากชื่อ" ด้านบน</p>
-                      <p className="text-xs text-slate-500 mt-1">ระบบจะค้นหาชื่อ-สกุลนักเรียนในเอกสารแล้วนำมาจับคู่กับรหัสประจำตัวและแผนการเรียน</p>
+                      <p className="text-xs text-slate-500 mt-1">ระบบจะค้นหาเฉพาะชื่อ-สกุลนักเรียนที่มีอยู่ในฐานข้อมูลของโรงเรียน ({activeStudentsPool.length} คน)</p>
                     </div>
                   )}
 
                   {!isProcessing && searchCompleted && foundStudentsList.length === 0 && (
                     <div className="h-full flex flex-col items-center justify-center p-6 text-center text-slate-500">
                       <AlertCircle className="w-8 h-8 text-amber-500 mb-2" />
-                      <p className="text-sm font-bold">ไม่พบรายชื่อในเอกสาร</p>
-                      <p className="text-xs text-slate-400 mt-1">สามารถพิมพ์รายชื่อในกล่องข้อความดิบแล้วกดประมวลผลใหม่ หรือเพิ่มรายชื่อด้วยตนเองในตารางด้านล่าง</p>
+                      <p className="text-sm font-bold text-slate-800">ไม่พบรายชื่อนักเรียนของโรงเรียนในเอกสารนี้</p>
+                      <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                        ไม่มีชื่อ-สกุลใดในเอกสารตรงกับฐานข้อมูลนักเรียน ({activeStudentsPool.length} คน) สามารถคลิก "เพิ่มรายชื่อ" ด้านล่างหากต้องการบันทึกด้วยตนเอง
+                      </p>
                     </div>
                   )}
 
                   {!isProcessing && searchCompleted && foundStudentsList.length > 0 && (
-                    <>
-                      {matchedStudents.length === 0 && (
-                        <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-xs text-amber-800 mb-2">
-                          💡 สกัดรายชื่อจากประกาศได้ {foundStudentsList.length} คน (สามารถเลือกรหัสนักเรียนเพื่อเชื่อมโยงในตารางด้านล่างได้)
-                        </div>
-                      )}
-                      {foundStudentsList.map((st, idx) => (
-                        <div key={idx} className="p-2.5 hover:bg-slate-50 transition-colors flex items-center justify-between gap-3 text-sm">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            {st.isMatched ? (
-                              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                            ) : (
-                              <span className="w-2 h-2 rounded-full bg-slate-300 shrink-0"></span>
-                            )}
-                            <div className="min-w-0">
-                              <p className="font-bold text-slate-900 truncate">{st.name}</p>
-                              <p className="text-xs text-slate-500 truncate">{st.subject || st.award || 'ชีววิทยา (สอวน.)'}</p>
-                            </div>
-                          </div>
-                          
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {st.isMatched ? (
-                              <>
-                                <span className="bg-slate-100 text-slate-800 font-mono text-xs px-2 py-0.5 rounded font-bold border border-slate-200">
-                                  {st.studentId}
-                                </span>
-                                <span className={`text-xs px-2 py-0.5 rounded font-bold ${
-                                  st.program === 'EP' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-blue-50 text-blue-700 border border-blue-200'
-                                }`}>
-                                  {st.program === 'EP' ? 'EP' : 'ปกติ'}
-                                </span>
-                              </>
-                            ) : (
-                              <span className="bg-slate-100 text-slate-600 text-xs px-2 py-0.5 rounded font-semibold border border-slate-200">
-                                จากประกาศ
-                              </span>
-                            )}
+                    foundStudentsList.map((st, idx) => (
+                      <div key={idx} className="p-2.5 hover:bg-slate-50 transition-colors flex items-center justify-between gap-3 text-sm">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-900 truncate">{st.name}</p>
+                            <p className="text-xs text-slate-500 truncate">{st.subject || st.award || 'ชีววิทยา (สอวน.)'}</p>
                           </div>
                         </div>
-                      ))}
-                    </>
+                        
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="bg-slate-100 text-slate-800 font-mono text-xs px-2 py-0.5 rounded font-bold border border-slate-200">
+                            {st.studentId}
+                          </span>
+                          <span className={`text-xs px-2 py-0.5 rounded font-bold ${
+                            st.program === 'EP' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-blue-50 text-blue-700 border border-blue-200'
+                          }`}>
+                            {st.program === 'EP' ? 'EP' : 'ปกติ'}
+                          </span>
+                        </div>
+                      </div>
+                    ))
                   )}
                 </div>
               </div>
@@ -620,28 +541,9 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
             <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-4">
               <div>
                 <h4 className="text-lg font-bold text-slate-900">ตรวจทานและแก้ไขรายชื่อก่อนบันทึก</h4>
-                <div className="flex items-center gap-3 mt-1">
-                  <p className="text-sm text-slate-500 font-medium">
-                    {tableFilter === 'matched' ? `แสดงเฉพาะนักเรียนที่ตรงกับฐานข้อมูล (${matchedStudents.length} คน)` : `แสดงรายชื่อทั้งหมด (${foundStudentsList.length} คน)`}
-                  </p>
-                  
-                  {/* Table Filter Switcher */}
-                  <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs font-bold">
-                    <button
-                      onClick={() => setTableFilter('all')}
-                      className={`px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${tableFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-900'}`}
-                    >
-                      ทั้งหมด ({foundStudentsList.length})
-                    </button>
-                    <button
-                      onClick={() => setTableFilter('matched')}
-                      className={`px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${tableFilter === 'matched' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-900'}`}
-                    >
-                      <CheckCircle2 size={12} className="text-emerald-600" />
-                      พบในฐานข้อมูล ({matchedStudents.length})
-                    </button>
-                  </div>
-                </div>
+                <p className="text-sm text-slate-500 font-medium mt-0.5">
+                  แสดงเฉพาะนักเรียนที่ตรงกับฐานข้อมูลโรงเรียน ({foundStudentsList.length} คน)
+                </p>
               </div>
 
               <div className="flex items-center gap-2">
@@ -656,7 +558,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                   onClick={handleSaveSearchRecord}
                   className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-bold transition-colors cursor-pointer shadow-sm flex items-center gap-2"
                 >
-                  บันทึกผลงานลงระบบ ({displayedStudents.length})
+                  บันทึกผลงานลงระบบ ({foundStudentsList.length})
                 </button>
               </div>
             </div>
@@ -674,83 +576,28 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                  {displayedStudents.length === 0 ? (
+                  {foundStudentsList.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                        {tableFilter === 'matched' 
-                          ? 'ไม่พบนักเรียนที่ตรงกับฐานข้อมูลในเอกสารนี้ กดแท็บ "ทั้งหมด" เพื่อดูรายชื่อทั้งหมด หรือคลิก "เพิ่มรายชื่อ"'
-                          : 'ยังไม่มีรายชื่อในตาราง คลิกปุ่ม "เพิ่มรายชื่อ" หรือกด "เริ่มประมวลผลจากชื่อ"'}
+                        ไม่พบนักเรียนของโรงเรียนในเอกสารนี้ หากต้องการเพิ่มรายชื่อนักเรียนด้วยตนเอง คลิกปุ่ม "เพิ่มรายชื่อ"
                       </td>
                     </tr>
                   ) : (
-                    displayedStudents.map((st, index) => (
+                    foundStudentsList.map((st, index) => (
                       <tr key={index} className="hover:bg-slate-50/60 transition-colors">
                         <td className="px-4 py-3">
-                          {st.isMatched ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md text-xs font-bold border border-emerald-200">
-                              ✓ พบในฐานข้อมูล
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-slate-600 bg-slate-100 px-2.5 py-1 rounded-md text-xs font-semibold border border-slate-200">
-                              จากประกาศ
-                            </span>
-                          )}
+                          <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md text-xs font-bold border border-emerald-200">
+                            ✓ พบในฐานข้อมูล
+                          </span>
                         </td>
-                        <td className="px-4 py-3 relative">
-                          <div className="flex items-center gap-2">
-                            <input 
-                              type="text" 
-                              value={st.name} 
-                              placeholder="ระบุชื่อ-สกุลนักเรียน..."
-                              onChange={(e) => {
-                                editTemporaryItem(index, 'name', e.target.value);
-                                setSuggestionQuery(e.target.value);
-                              }}
-                              onFocus={() => {
-                                setActiveSuggestionIndex(index);
-                                setSuggestionQuery(st.name);
-                              }}
-                              className="w-full min-w-[220px] px-3 py-1.5 border border-slate-200 hover:border-slate-300 focus-visible:border-slate-600 rounded-md focus-visible:outline-hidden transition bg-white text-base text-slate-900 font-semibold"
-                            />
-                            
-                            {!st.isMatched && (
-                              <button
-                                onClick={() => {
-                                  setActiveSuggestionIndex(activeSuggestionIndex === index ? null : index);
-                                  setSuggestionQuery('');
-                                }}
-                                className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition cursor-pointer"
-                                title="ค้นหาและเชื่อมโยงกับนักเรียนในฐานข้อมูล"
-                              >
-                                <Search size={16} />
-                              </button>
-                            )}
-                          </div>
-
-                          {/* Autocomplete Dropdown */}
-                          {activeSuggestionIndex === index && (
-                            <div className="absolute top-full left-0 mt-1 w-80 bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-2 text-xs">
-                              <div className="flex justify-between items-center px-2 py-1.5 border-b border-slate-100 mb-1">
-                                <span className="font-bold text-slate-700">เลือกนักเรียนในฐานข้อมูลโรงเรียน ({activeStudentsPool.length} คน)</span>
-                                <button onClick={() => setActiveSuggestionIndex(null)} className="text-slate-400 hover:text-slate-700 cursor-pointer font-bold">✕</button>
-                              </div>
-                              <div className="max-h-48 overflow-y-auto divide-y divide-slate-100">
-                                {filteredSuggestions.map((s, sIdx) => (
-                                  <button
-                                    key={sIdx}
-                                    onClick={() => linkStudentFromDb(index, s)}
-                                    className="w-full text-left p-2 hover:bg-indigo-50 rounded-lg transition flex items-center justify-between gap-2 cursor-pointer"
-                                  >
-                                    <div>
-                                      <p className="font-bold text-slate-900">{s.name}</p>
-                                      <p className="text-[11px] text-slate-500">ห้อง {s.room} ({s.grade}) • {s.program}</p>
-                                    </div>
-                                    <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded font-bold text-slate-700">{s.studentId}</span>
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                        <td className="px-4 py-3">
+                          <input 
+                            type="text" 
+                            value={st.name} 
+                            placeholder="ระบุชื่อ-สกุลนักเรียน..."
+                            onChange={(e) => editTemporaryItem(index, 'name', e.target.value)}
+                            className="w-full min-w-[220px] px-3 py-1.5 border border-slate-200 hover:border-slate-300 focus-visible:border-slate-600 rounded-md focus-visible:outline-hidden transition bg-white text-base text-slate-900 font-semibold"
+                          />
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
@@ -759,9 +606,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                               value={st.studentId} 
                               placeholder="รหัส..."
                               onChange={(e) => editTemporaryItem(index, 'studentId', e.target.value)}
-                              className={"w-24 px-2 py-1.5 border rounded-md focus-visible:outline-hidden transition text-base font-bold text-center " + (
-                                st.isMatched ? 'border-slate-200 bg-slate-50 text-slate-900' : 'border-slate-200 bg-white text-slate-600'
-                              )}
+                              className="w-24 px-2 py-1.5 border border-slate-200 bg-slate-50 text-slate-900 rounded-md focus-visible:outline-hidden transition text-base font-bold text-center"
                             />
                             <span className="text-slate-300">/</span>
                             <input 
