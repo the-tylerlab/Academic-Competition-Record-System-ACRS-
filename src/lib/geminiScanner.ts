@@ -1,4 +1,4 @@
-// Service for scanning documents using Google Gemini 1.5 Flash Vision AI
+// Service for scanning documents using Google Gemini Vision AI with Auto-Model Selection
 
 export interface GeminiScannedStudent {
   name: string;
@@ -34,7 +34,54 @@ export async function fileToBase64(file: File): Promise<{ base64: string; mimeTy
 }
 
 /**
- * Scan a document (PDF, Image, or Text) using Google Gemini 1.5 Flash
+ * Auto-detect the best available Gemini model for this API key
+ */
+async function getAvailableModelList(apiKey: string): Promise<string[]> {
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
+    if (res.ok) {
+      const data = await res.json();
+      const models: any[] = data.models || [];
+      const usable = models
+        .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+        .map((m: any) => m.name.replace('models/', ''));
+
+      const preferred = [
+        'gemini-2.0-flash',
+        'gemini-1.5-flash-latest',
+        'gemini-1.5-flash',
+        'gemini-1.5-flash-002',
+        'gemini-1.5-flash-001',
+        'gemini-2.0-flash-exp',
+        'gemini-1.5-pro-latest',
+        'gemini-1.5-pro'
+      ];
+
+      const sorted = preferred.filter(p => usable.includes(p));
+      for (const u of usable) {
+        if (!sorted.includes(u) && (u.includes('gemini') || u.includes('flash'))) {
+          sorted.push(u);
+        }
+      }
+
+      if (sorted.length > 0) return sorted;
+    }
+  } catch (err) {
+    console.warn('Could not auto-list Gemini models:', err);
+  }
+
+  // Default fallback sequence
+  return [
+    'gemini-2.0-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-002',
+    'gemini-1.5-pro'
+  ];
+}
+
+/**
+ * Scan a document (PDF, Image, or Text) using Google Gemini AI
  */
 export async function scanDocumentWithGemini(
   fileOrText: File | string,
@@ -50,7 +97,8 @@ export async function scanDocumentWithGemini(
     throw new Error('ไม่พบ Gemini API Key กรุณาระบุ Gemini API Key ในการตั้งค่า');
   }
 
-  onProgress?.('กำลังเตรียมไฟล์ส่งไปยัง Google Gemini Vision AI...');
+  onProgress?.('กำลังค้นหาโมเดล AI ที่พร้อมใช้งาน...');
+  const candidateModels = await getAvailableModelList(activeKey);
 
   const promptText = `
 คุณคือระบบ AI ผู้เชี่ยวชาญการอ่านเอกสารประกาศผลการแข่งขันทางวิชาการและสอบวัดระดับ (เช่น สอวน., สพฐ., สสวท., เพชรยอดมงกุฎ, ศิลปหัตถกรรม)
@@ -81,7 +129,7 @@ export async function scanDocumentWithGemini(
   if (typeof fileOrText === 'string') {
     parts.push({ text: `\n\nเนื้อหาข้อความจากเอกสาร:\n${fileOrText}` });
   } else {
-    onProgress?.(`กำลังประมวลผลไฟล์ ${fileOrText.name} (${(fileOrText.size / 1024).toFixed(1)} KB)...`);
+    onProgress?.(`กำลังเตรียมไฟล์ ${fileOrText.name} (${(fileOrText.size / 1024).toFixed(1)} KB)...`);
     const { base64, mimeType } = await fileToBase64(fileOrText);
     parts.push({
       inline_data: {
@@ -91,43 +139,59 @@ export async function scanDocumentWithGemini(
     });
   }
 
-  onProgress?.('Google Gemini 1.5 Flash กำลังอ่านและวิเคราะห์รายชื่อ...');
+  let lastError: Error | null = null;
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(activeKey)}`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.1,
+  for (const modelName of candidateModels) {
+    try {
+      onProgress?.(`กำลังอ่านเอกสารด้วยโมเดล ${modelName}...`);
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${encodeURIComponent(activeKey)}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contents: [{ parts }],
+            generationConfig: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+            }
+          })
         }
-      })
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const message = errorData?.error?.message || `HTTP ${response.status} ${response.statusText}`;
+        
+        // If model not found (404), try next candidate model
+        if (response.status === 404 || message.includes('not found') || message.includes('not supported')) {
+          console.warn(`Model ${modelName} returned 404/not supported, trying next model...`);
+          lastError = new Error(`Model ${modelName}: ${message}`);
+          continue;
+        }
+
+        throw new Error(`Gemini API Error: ${message}`);
+      }
+
+      const data = await response.json();
+      const rawResponseText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!rawResponseText) {
+        throw new Error('ไม่ได้รับข้อมูลตอบกลับจาก AI');
+      }
+
+      const parsedResult = JSON.parse(rawResponseText) as GeminiScanResult;
+      return parsedResult;
+    } catch (err: any) {
+      lastError = err;
+      if (err.message && !err.message.includes('not found') && !err.message.includes('404')) {
+        throw err;
+      }
     }
-  );
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    const message = errorData?.error?.message || `HTTP Error ${response.status} ${response.statusText}`;
-    throw new Error(`Gemini API Error: ${message}`);
   }
 
-  const data = await response.json();
-  const rawResponseText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!rawResponseText) {
-    throw new Error('ไม่ได้รับข้อมูลตอบกลับจาก Gemini AI');
-  }
-
-  try {
-    const parsedResult = JSON.parse(rawResponseText) as GeminiScanResult;
-    return parsedResult;
-  } catch (err) {
-    console.error('Failed to parse Gemini response as JSON:', rawResponseText);
-    throw new Error('รูปแบบข้อมูลที่ส่งกลับมาจาก AI ไม่ถูกต้อง');
-  }
+  throw lastError || new Error('ไม่สามารถเชื่อมต่อโมเดล Gemini ใดๆ ได้');
 }
