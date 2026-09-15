@@ -159,7 +159,7 @@ async function performHighResOcr(
       }
 
       const page = await pdfDoc.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 2.0 });
+      const viewport = page.getViewport({ scale: 2.5 });
       
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -168,6 +168,24 @@ async function performHighResOcr(
 
       if (context) {
         await page.render({ canvasContext: context, viewport }).promise;
+
+        // Enhance image contrast and sharpness for Thai OCR
+        try {
+          const imgData = context.getImageData(0, 0, canvas.width, canvas.height);
+          const d = imgData.data;
+          for (let i = 0; i < d.length; i += 4) {
+            const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            // Adaptive contrast enhancement
+            const enhanced = gray < 170 ? Math.max(0, gray - 50) : Math.min(255, gray + 40);
+            d[i] = enhanced;
+            d[i + 1] = enhanced;
+            d[i + 2] = enhanced;
+          }
+          context.putImageData(imgData, 0, 0);
+        } catch {
+          // fallback to standard canvas if getImageData fails
+        }
+
         const ret = await worker.recognize(canvas);
         if (ret && ret.data && ret.data.text) {
           fullOcrText += `--- [ หน้า ${pageNum} ] ---\n` + ret.data.text.trim() + '\n\n';

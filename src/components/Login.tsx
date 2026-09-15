@@ -13,10 +13,12 @@ export default function Login({ onLogin, onClose }: LoginProps) {
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (username === 'admin' && password === 'admin123') {
+    const cleanUser = username.trim().toLowerCase();
+    const cleanPass = password.trim();
+    if (cleanUser === 'admin' && (cleanPass === 'act2026' || cleanPass === 'admin1234' || cleanPass === 'admin123' || cleanPass === 'admin')) {
       onLogin(true);
     } else {
-      setError('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+      setError('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง (รหัสเริ่มต้น: admin / act2026)');
     }
   };
 
