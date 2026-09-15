@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { isNameMatch, cleanAndNormalizeThaiName } from '../lib/nameMatcher';
 
 interface StudentManagerProps {
   students: any[];
@@ -20,7 +21,12 @@ export default function StudentManager({ students, setStudents, setShowImportMod
 
   const filteredStudents = students.filter(s => {
     const matchProg = filterProgram === 'all' || s.program === filterProgram;
-    const matchSearch = s.name.includes(searchTerm) || s.studentId.includes(searchTerm);
+    if (!searchTerm.trim()) return matchProg;
+    const matchSearch = 
+      s.name.includes(searchTerm) || 
+      s.studentId.includes(searchTerm) ||
+      cleanAndNormalizeThaiName(s.name).toLowerCase().includes(cleanAndNormalizeThaiName(searchTerm).toLowerCase()) ||
+      isNameMatch(s.name, searchTerm);
     return matchProg && matchSearch;
   });
 

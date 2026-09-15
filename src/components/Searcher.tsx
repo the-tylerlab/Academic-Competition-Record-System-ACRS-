@@ -1,6 +1,8 @@
-import { useState } from 'react';
-import { Upload, ChevronDown } from 'lucide-react';
-import { MOCK_SOURCES } from '../mockData';
+import { useState, useRef } from 'react';
+import { Upload, ChevronDown, CheckCircle2, AlertCircle, Plus, FileText, Globe, RefreshCw } from 'lucide-react';
+import { MOCK_SOURCES, DEFAULT_STUDENTS } from '../mockData';
+import { extractTextFromPdf } from '../lib/pdfExtractor';
+import { extractAndMatchStudentsFromText, findMatchingStudent, cleanAndNormalizeThaiName } from '../lib/nameMatcher';
 
 interface SearcherProps {
   students: any[];
@@ -9,34 +11,81 @@ interface SearcherProps {
 }
 
 export default function Searcher({ students, onSaveRecord, role }: SearcherProps) {
+  const activeStudentsPool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
+
   const [selectedSource, setSelectedSource] = useState<any>(MOCK_SOURCES[0]);
-  const [inputType, setInputType] = useState('file'); // 'file' or 'url'
+  const [inputType, setInputType] = useState<'file' | 'url'>('file');
   const [customUrl, setCustomUrl] = useState('');
   
   const [isProcessing, setIsProcessing] = useState(false);
   const [processProgress, setProcessProgress] = useState(0);
   const [searchCompleted, setSearchCompleted] = useState(false);
   
-  const [scannedText, setScannedText] = useState('');
+  const [scannedText, setScannedText] = useState(MOCK_SOURCES[0].rawText);
   const [foundStudentsList, setFoundStudentsList] = useState<any[]>([]);
+  const [isFileReading, setIsFileReading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [recordMeta, setRecordMeta] = useState({
-    competitionName: "การแข่งขันทักษะทางวิชาการปีการศึกษา 2569",
+    competitionName: "การแข่งขันทักษะทางวิชาการประจำปีการศึกษา 2569",
     academicYear: "2569",
     notes: ""
   });
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const file = e.target.files[0];
+      setIsFileReading(true);
+      setSearchCompleted(false);
+
+      try {
+        let extracted = '';
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+          const arrayBuffer = await file.arrayBuffer();
+          extracted = await extractTextFromPdf(arrayBuffer);
+        } else if (file.type.startsWith('text/') || file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().endsWith('.csv')) {
+          extracted = await file.text();
+        } else {
+          // Image or other document
+          extracted = `[เอกสารแนบ: ${file.name}]\n(หากระบบ OCR ไม่ดึงข้อความอัตโนมัติ สามารถพิมพ์หรือวางข้อความประกาศในกล่องข้อความดิบด้านล่างได้โดยตรง)`;
+        }
+
+        const source = {
+          id: 'uploaded-file',
+          name: file.name,
+          fileName: file.name,
+          rawText: extracted,
+          description: extracted ? `อ่านข้อความเรียบร้อย (${extracted.length} ตัวอักษร)` : 'อัปโหลดสำเร็จ พร้อมทำการสแกน'
+        };
+
+        setSelectedSource(source);
+        if (extracted) {
+          setScannedText(extracted);
+        }
+      } catch (err: any) {
+        console.error('File read error:', err);
+        alert('เกิดข้อผิดพลาดในการอ่านไฟล์: ' + err.message);
+      } finally {
+        setIsFileReading(false);
+      }
+    }
+  };
 
   const handleIdSearchAndExtract = () => {
     setIsProcessing(true);
     setProcessProgress(0);
     setSearchCompleted(false);
 
-    let activeSource = selectedSource;
+    let textToProcess = scannedText;
     if (inputType === 'url' && customUrl.trim() !== '') {
       const matchedSource = MOCK_SOURCES.find(s => s.sourceType === 'url');
-      if (matchedSource) {
-        activeSource = matchedSource;
+      if (matchedSource && (!textToProcess || textToProcess === MOCK_SOURCES[0].rawText)) {
+        textToProcess = matchedSource.rawText;
+        setScannedText(matchedSource.rawText);
       }
+    } else if (inputType === 'file' && (!textToProcess || textToProcess.trim() === '')) {
+      textToProcess = selectedSource?.rawText || MOCK_SOURCES[0].rawText;
+      setScannedText(textToProcess);
     }
 
     const interval = setInterval(() => {
@@ -45,52 +94,72 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           clearInterval(interval);
           setIsProcessing(false);
           setSearchCompleted(true);
-          setScannedText(activeSource.rawText);
 
-          // MATCHING & CURRICULUM CLASSIFICATION PROCESS
-          const processedList = activeSource.parsedStudents.map((parsed: any) => {
-            const dbStudent = students.find(s => 
-              s.name.includes(parsed.name) || parsed.name.includes(s.name)
-            );
+          // SMART MATCHING & CURRICULUM CLASSIFICATION
+          let processedList = extractAndMatchStudentsFromText(textToProcess, activeStudentsPool);
 
-            if (dbStudent) {
-              return {
-                ...parsed,
-                isMatched: true,
-                studentId: dbStudent.studentId,
-                grade: dbStudent.grade,
-                room: dbStudent.room,
-                program: dbStudent.program, 
-                email: dbStudent.email
-              };
-            } else {
-              return {
-                ...parsed,
-                isMatched: false,
-                studentId: "ไม่พบข้อมูล",
-                grade: "N/A",
-                room: "N/A",
-                program: "Unknown",
-                email: "N/A"
-              };
-            }
-          });
+          // Fallback / merge if activeSource has parsedStudents (e.g. mock demo datasets)
+          if (selectedSource?.parsedStudents && Array.isArray(selectedSource.parsedStudents)) {
+            const existingStudentIds = new Set(processedList.filter(s => s.isMatched).map(s => s.studentId));
+            const existingNames = new Set(processedList.map(s => cleanAndNormalizeThaiName(s.name)));
+
+            selectedSource.parsedStudents.forEach((parsed: any) => {
+              const cleanName = cleanAndNormalizeThaiName(parsed.name);
+              if (!existingNames.has(cleanName)) {
+                const dbStudent = findMatchingStudent(parsed.name, activeStudentsPool);
+                if (dbStudent) {
+                  if (!existingStudentIds.has(dbStudent.studentId)) {
+                    processedList.push({
+                      name: dbStudent.name || parsed.name,
+                      subject: parsed.subject || 'วิชาการ',
+                      award: parsed.award || 'ผ่านการคัดเลือก',
+                      isMatched: true,
+                      studentId: dbStudent.studentId,
+                      grade: dbStudent.grade,
+                      room: dbStudent.room,
+                      program: dbStudent.program,
+                      email: dbStudent.email || ''
+                    });
+                    existingStudentIds.add(dbStudent.studentId);
+                  }
+                } else {
+                  processedList.push({
+                    name: parsed.name,
+                    subject: parsed.subject || 'วิชาการ',
+                    award: parsed.award || 'ผ่านการคัดเลือก',
+                    isMatched: false,
+                    studentId: "ไม่พบข้อมูล",
+                    grade: "N/A",
+                    room: "N/A",
+                    program: "Unknown",
+                    email: "N/A"
+                  });
+                }
+                existingNames.add(cleanName);
+              }
+            });
+          }
 
           setFoundStudentsList(processedList);
           return 100;
         }
         return prev + 25;
       });
-    }, 200);
+    }, 150);
   };
 
   const handleSaveSearchRecord = async () => {
+    if (foundStudentsList.length === 0) {
+      alert("ไม่พบรายการนักเรียนสำหรับบันทึก กรุณาเพิ่มหรือประมวลผลข้อมูลก่อน");
+      return;
+    }
+
     const newRecord = {
       title: recordMeta.competitionName,
       year: recordMeta.academicYear,
       notes: recordMeta.notes,
       sourceType: inputType,
-      sourceName: inputType === 'url' ? (customUrl || selectedSource.webUrl) : selectedSource.fileName,
+      sourceName: inputType === 'url' ? (customUrl || selectedSource.webUrl || 'เว็บไซต์ประกาศ') : (selectedSource.fileName || selectedSource.name || 'ไฟล์ประกาศ'),
       recordedBy: role === 'academic' ? 'ฝ่ายวิชาการ' : 'ครูผู้ส่งผลงาน',
       students: foundStudentsList,
       status: "รออนุมัติจัดเก็บ"
@@ -103,8 +172,9 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
     const updated = [...foundStudentsList];
     updated[index][field] = value;
 
+    // If studentId edited, attempt auto-match by ID
     if (field === 'studentId') {
-      const match = students.find(s => s.studentId === value);
+      const match = activeStudentsPool.find(s => s.studentId === value.trim());
       if (match) {
         updated[index] = {
           ...updated[index],
@@ -113,10 +183,29 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           grade: match.grade,
           room: match.room,
           program: match.program,
-          email: match.email
+          email: match.email || ''
         };
       }
     }
+
+    // If name edited, attempt auto-match by Name
+    if (field === 'name') {
+      const match = findMatchingStudent(value, activeStudentsPool);
+      if (match) {
+        updated[index] = {
+          ...updated[index],
+          isMatched: true,
+          studentId: match.studentId,
+          grade: match.grade,
+          room: match.room,
+          program: match.program,
+          email: match.email || ''
+        };
+      } else {
+        updated[index].isMatched = false;
+      }
+    }
+
     setFoundStudentsList(updated);
   };
 
@@ -124,26 +213,64 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
     setFoundStudentsList(foundStudentsList.filter((_, i) => i !== index));
   };
 
+  const addNewStudentRow = () => {
+    setFoundStudentsList([
+      ...foundStudentsList,
+      {
+        name: "",
+        subject: "วิชาการ",
+        award: "เกียรติบัตร",
+        isMatched: false,
+        studentId: "",
+        grade: "ม.4",
+        room: "1",
+        program: "Normal",
+        email: ""
+      }
+    ]);
+  };
+
+  const matchedCount = foundStudentsList.filter(s => s.isMatched).length;
+  const unmatchedCount = foundStudentsList.length - matchedCount;
+
   return (
     <div className="flex flex-col gap-6 animate-fade-in text-slate-900">
       <div className="bg-white p-6 md:p-8 rounded-xl border border-slate-200 shadow-2xs">
         
-        <div className="mb-6 border-b border-slate-100 pb-5">
-          <h3 className="text-xl font-bold text-slate-900">ค้นหาเลขประจำตัวและจัดแยกหลักสูตร</h3>
-          <p className="text-base text-slate-500 mt-1">สแกนชื่อนักเรียนจากรูปภาพ ไฟล์เอกสาร หรือลิงก์ประกาศผลลัพธ์เพื่อเทียบหาเลขประจำตัวและห้องเรียนทันที</p>
+        <div className="mb-6 border-b border-slate-100 pb-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+              <span>ค้นหาเลขประจำตัวและจัดแยกหลักสูตรอัตโนมัติ</span>
+            </h3>
+            <p className="text-base text-slate-500 mt-1">
+              นำเข้าไฟล์ประกาศผล (PDF, รูปภาพ หรือข้อความ) ระบบจะประมวลผลชื่อ-สกุล เทียบกับฐานข้อมูลโรงเรียนและระบุรหัสประจำตัว/หลักสูตรทันที
+            </p>
+          </div>
+          <div className="text-sm font-semibold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 flex items-center gap-2 w-fit">
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            ฐานข้อมูลนักเรียน: <strong className="text-slate-900">{activeStudentsPool.length} คน</strong>
+          </div>
         </div>
 
-        {/* Stepper Header for Scanned Searcher */}
+        {/* Stepper Header */}
         <div className="mb-8 bg-slate-50 border border-slate-200 rounded-lg p-4 flex items-center justify-between flex-wrap gap-4 shadow-3xs">
           <span className="text-sm font-extrabold text-slate-400 uppercase tracking-wider">กระบวนการวิเคราะห์ผลงาน:</span>
           <div className="flex items-center gap-2 text-sm font-bold">
-            <span className={`px-2.5 py-1 rounded transition-colors ${!searchCompleted && !isProcessing ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-500'}`}>1. ตั้งค่าแหล่งข้อมูล</span>
+            <span className={`px-2.5 py-1 rounded transition-colors ${!searchCompleted && !isProcessing ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-500'}`}>
+              1. นำเข้าเอกสาร
+            </span>
             <span className="text-slate-300">&rarr;</span>
-            <span className={`px-2.5 py-1 rounded transition-colors ${isProcessing ? 'bg-slate-900 text-white animate-pulse' : 'bg-slate-200 text-slate-500'}`}>2. ค้นหาคำรหัส</span>
+            <span className={`px-2.5 py-1 rounded transition-colors ${isProcessing ? 'bg-slate-900 text-white animate-pulse' : 'bg-slate-200 text-slate-500'}`}>
+              2. ประมวลผลชื่อ-สกุล
+            </span>
             <span className="text-slate-300">&rarr;</span>
-            <span className={`px-2.5 py-1 rounded transition-colors ${searchCompleted ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-500'}`}>3. จับคู่ &amp; ตรวจทาน</span>
+            <span className={`px-2.5 py-1 rounded transition-colors ${searchCompleted ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-500'}`}>
+              3. ตรวจสอบการจับคู่
+            </span>
             <span className="text-slate-300">&rarr;</span>
-            <span className="px-2.5 py-1 rounded bg-slate-200 text-slate-500">4. บันทึกผลสำเร็จ</span>
+            <span className="px-2.5 py-1 rounded bg-slate-200 text-slate-500">
+              4. บันทึกผลงาน
+            </span>
           </div>
         </div>
 
@@ -156,6 +283,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
               value={recordMeta.competitionName}
               onChange={(e) => setRecordMeta({...recordMeta, competitionName: e.target.value})}
               className="w-full h-[42px] px-4 py-2 border border-slate-200 bg-transparent rounded-lg text-base focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-2xs outline-none font-semibold text-slate-800"
+              placeholder="เช่น การแข่งขันคัดเลือกโอลิมปิกวิชาการ สอวน."
             />
           </div>
           <div className="md:col-span-3">
@@ -168,12 +296,13 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
               >
                 <option value="2569">2569 (ปีปัจจุบัน)</option>
                 <option value="2568">2568</option>
+                <option value="2567">2567</option>
               </select>
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 pointer-events-none" />
             </div>
           </div>
           <div className="md:col-span-3">
-            <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">หมายเหตุรายงานเพิ่มเติม (ทางเลือก)</label>
+            <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-2">หมายเหตุรายงานเพิ่มเติม</label>
             <input 
               type="text" 
               placeholder="ระบุข้อความ..."
@@ -190,45 +319,44 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           <div className="flex gap-1 p-1 bg-slate-100 rounded-lg w-fit mb-5 border border-slate-200 shadow-3xs">
             <button
               onClick={() => { setInputType('file'); setSearchCompleted(false); }}
-              className={"px-5 py-1.5 rounded-md text-base font-bold transition-all cursor-pointer " + (inputType === 'file' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-900')}
+              className={"px-5 py-1.5 rounded-md text-base font-bold transition-all cursor-pointer flex items-center gap-2 " + (inputType === 'file' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-900')}
             >
-              อัปโหลดไฟล์ประกาศ
+              <FileText size={16} />
+              อัปโหลดไฟล์ประกาศ (PDF, TXT, รูปภาพ)
             </button>
             <button
               onClick={() => { setInputType('url'); setSearchCompleted(false); }}
-              className={"px-5 py-1.5 rounded-md text-base font-bold transition-all cursor-pointer " + (inputType === 'url' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-900')}
+              className={"px-5 py-1.5 rounded-md text-base font-bold transition-all cursor-pointer flex items-center gap-2 " + (inputType === 'url' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-900')}
             >
+              <Globe size={16} />
               ระบุลิงก์เว็บไซต์ประกาศผล
             </button>
           </div>
 
           {inputType === 'file' ? (
             <div>
-              <p className="text-sm text-slate-500 font-bold uppercase tracking-wider mb-3">อัปโหลดไฟล์ประกาศผล (PDF, JPG, PNG):</p>
-              <div className="border-2 border-dashed border-slate-300 rounded-xl p-8 text-center bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer relative">
+              <div className="border-2 border-dashed border-slate-300 hover:border-slate-400 rounded-xl p-8 text-center bg-slate-50 hover:bg-slate-100/80 transition-colors cursor-pointer relative">
                 <input 
+                  ref={fileInputRef}
                   type="file" 
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  accept=".pdf,image/*"
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files.length > 0) {
-                      const file = e.target.files[0];
-                      // Use mock source 0 but override the filename
-                      const source = { ...MOCK_SOURCES[0], id: 'uploaded-file', name: file.name, fileName: file.name, description: 'อัปโหลดสำเร็จ พร้อมทำการสแกน' };
-                      setSelectedSource(source);
-                      setSearchCompleted(false);
-                    }
-                  }}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  accept=".pdf,text/plain,text/csv,image/*"
+                  onChange={handleFileUpload}
+                  disabled={isFileReading}
                 />
                 <div className="flex flex-col items-center justify-center pointer-events-none">
                   <div className="w-12 h-12 bg-white rounded-full shadow-sm flex items-center justify-center mb-3">
-                    <Upload size={24} className="text-indigo-600" />
+                    {isFileReading ? (
+                      <RefreshCw size={24} className="text-indigo-600 animate-spin" />
+                    ) : (
+                      <Upload size={24} className="text-indigo-600" />
+                    )}
                   </div>
                   <p className="text-base font-bold text-slate-900 mb-1">
-                    {selectedSource.id === 'uploaded-file' ? selectedSource.name : 'คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวางที่นี่'}
+                    {isFileReading ? 'กำลังสกัดข้อความจากไฟล์...' : (selectedSource?.id === 'uploaded-file' ? selectedSource.name : 'คลิกเพื่อเลือกไฟล์ PDF ประกาศ หรือลากไฟล์มาวางที่นี่')}
                   </p>
                   <p className="text-sm text-slate-500 font-medium">
-                    {selectedSource.id === 'uploaded-file' ? 'ไฟล์ถูกอัปโหลดเรียบร้อยแล้ว' : 'รองรับไฟล์ PDF, JPG, PNG ขนาดไม่เกิน 10MB'}
+                    {selectedSource?.id === 'uploaded-file' ? selectedSource.description : 'รองรับไฟล์ PDF (ระบบจะสกัดชื่อ-สกุลจากทุกหน้าให้อัตโนมัติ), TXT, รูปภาพ'}
                   </p>
                 </div>
               </div>
@@ -239,7 +367,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                 <label className="block text-sm text-slate-500 font-bold uppercase tracking-wider mb-2">ระบุลิงก์ประกาศผลจากสมาคม หรือโรงเรียน:</label>
                 <input 
                   type="text" 
-                  placeholder="ระบุ URL..."
+                  placeholder="https://example.com/results"
                   value={customUrl}
                   onChange={(e) => { setCustomUrl(e.target.value); setSearchCompleted(false); }}
                   className="w-full px-4 py-2.5 border border-slate-200 rounded-lg text-base focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-2xs outline-none font-semibold text-slate-800"
@@ -249,196 +377,273 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           )}
         </div>
 
-        {/* SCANNING WORKSPACE */}
+        {/* SCANNING WORKSPACE & RAW TEXT INSPECTOR */}
         <div className="border border-slate-200 rounded-xl overflow-hidden mb-8 bg-white shadow-2xs">
-          <div className="bg-slate-50 px-5 py-4 border-b border-slate-200 flex justify-between items-center">
-            <span className="text-sm font-extrabold text-slate-500 uppercase tracking-widest">
-              {inputType === 'file' ? 'ระบบประมวลผลและสกัดข้อมูลจากเอกสาร' : 'ระบบประมวลผลและดึงข้อมูลจากลิงก์เว็บ'}
+          <div className="bg-slate-50 px-5 py-4 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
+            <span className="text-sm font-extrabold text-slate-600 uppercase tracking-widest flex items-center gap-2">
+              <FileText size={16} className="text-slate-500" />
+              {inputType === 'file' ? 'ระบบสกัดข้อความและประมวลผลจากเอกสาร' : 'ระบบประมวลผลข้อความจากเว็บไซต์'}
             </span>
-            <button 
-              onClick={handleIdSearchAndExtract}
-              disabled={isProcessing}
-              className="px-5 py-2 bg-slate-900 hover:bg-slate-900/90 text-white rounded-lg text-base font-bold transition-colors disabled:opacity-50 cursor-pointer shadow-sm"
-            >
-              {isProcessing ? 'กำลังวิเคราะห์ผล...' : 'เริ่มประมวลคำรหัส'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={handleIdSearchAndExtract}
+                disabled={isProcessing || isFileReading}
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-base font-bold transition-all disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-2"
+              >
+                {isProcessing ? (
+                  <>
+                    <RefreshCw size={18} className="animate-spin" />
+                    กำลังประมวลผลจากชื่อ...
+                  </>
+                ) : (
+                  <>
+                    <span>เริ่มประมวลผลจากชื่อ</span>
+                    <span className="text-slate-400">&rarr;</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
-          <div className="p-8 min-h-[200px] flex flex-col items-center justify-center relative bg-slate-50/30">
-            {!isProcessing && !searchCompleted && (
-              <div className="text-center">
-                <p className="text-base font-bold text-slate-600">พร้อมประมวลผลข้อมูล</p>
-                <p className="text-sm text-slate-500 mt-2 font-semibold">
-                  {inputType === 'file' 
-                    ? `เอกสาร: ${selectedSource.fileName}` 
-                    : `ลิงก์เป้าหมาย: ${customUrl || selectedSource.webUrl}`
-                  }
-                </p>
+          <div className="p-6 bg-slate-50/40">
+            {/* RAW TEXT & FOUND SUMMARY */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              
+              {/* RAW TEXT BOX */}
+              <div className="lg:col-span-6 flex flex-col">
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">
+                    ข้อความดิบที่สกัดได้ (RAW TEXT - สามารถแก้ไขหรือวางเพิ่มได้)
+                  </label>
+                  <span className="text-xs font-semibold text-slate-400">
+                    {scannedText.length} ตัวอักษร
+                  </span>
+                </div>
+                <textarea 
+                  value={scannedText}
+                  onChange={(e) => {
+                    setScannedText(e.target.value);
+                    setSearchCompleted(false);
+                  }}
+                  placeholder="วางข้อความรายชื่อประกาศ หรืออัปโหลดไฟล์ PDF ด้านบน..."
+                  rows={9}
+                  className="w-full text-sm text-slate-800 bg-white p-3.5 border border-slate-200 rounded-lg font-mono focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-inner resize-y leading-relaxed"
+                />
               </div>
-            )}
 
-            {isProcessing && (
-              <div className="text-center w-full max-w-md flex flex-col gap-3">
-                <div className="flex justify-between text-base font-bold text-slate-700">
-                  <span>กำลังดึงชื่อพร้อมค้นหาข้อมูลรหัสในทำเนียบ...</span>
-                  <span>{processProgress}%</span>
+              {/* LIVE CLASSIFICATION PREVIEW */}
+              <div className="lg:col-span-6 flex flex-col">
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">
+                    ผลการจำแนกและจับคู่กับฐานข้อมูลโรงเรียน
+                  </label>
+                  {searchCompleted && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                        พบ {matchedCount}
+                      </span>
+                      {unmatchedCount > 0 && (
+                        <span className="text-xs font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800">
+                          รอตรวจทาน {unmatchedCount}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden border border-slate-300">
-                  <div className="bg-slate-900 h-full w-full transition-transform origin-left" style={{ transform: `scaleX(${processProgress / 100})` }}></div>
-                </div>
-              </div>
-            )}
 
-            {searchCompleted && (
-              <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
-                <div>
-                  <h4 className="text-sm font-extrabold text-slate-500 uppercase tracking-widest mb-3">ข้อความดิบที่แยกได้ (RAW TEXT)</h4>
-                  <pre className="text-sm text-slate-700 bg-white p-4 border border-slate-200 rounded-lg h-[240px] overflow-y-auto whitespace-pre-wrap font-mono shadow-inner">
-                    {scannedText}
-                  </pre>
-                </div>
-                <div>
-                  <div className="flex justify-between items-center mb-3">
-                    <h4 className="text-sm font-extrabold text-slate-500 uppercase tracking-widest">จำแนกเป้าหมายหลักสูตร</h4>
-                    <span className="text-sm bg-slate-900 text-white px-2.5 py-1 rounded-md font-bold">{foundStudentsList.length} รายการ</span>
-                  </div>
-                  <div className="bg-white border border-slate-200 rounded-lg h-[240px] overflow-y-auto shadow-inner divide-y divide-slate-100">
-                    {foundStudentsList.map((st, idx) => (
-                      <div key={idx} className="p-3.5 hover:bg-slate-50 transition-colors flex gap-3">
-                        <div className="pt-0.5">
-                          {st.isMatched ? (
-                            <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center border border-emerald-200 text-sm font-bold">✓</div>
-                          ) : (
-                            <div className="w-5 h-5 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center border border-rose-200 text-sm font-bold">!</div>
-                          )}
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-base font-bold text-slate-900">{st.name}</p>
-                          <div className="flex flex-wrap gap-1.5 mt-2 font-medium">
-                            {st.isMatched ? (
-                              <>
-                                <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-sm border border-slate-200">{st.studentId}</span>
-                                <span className={"px-2 py-0.5 rounded-md text-sm border " + (
-                                  st.program === 'EP' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-blue-50 text-blue-700 border-blue-200'
-                                )}>
-                                  {st.program === 'EP' ? 'EP (หลักสูตรอังกฤษ)' : 'Normal (ภาคปกติ)'}
-                                </span>
-                              </>
-                            ) : (
-                              <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded-md text-sm border border-rose-200">ไม่พบในฐานข้อมูล</span>
-                            )}
-                            <span className="bg-slate-50 text-slate-600 px-2 py-0.5 rounded-md text-sm border border-slate-200 truncate max-w-[150px]">{st.subject || st.award}</span>
-                          </div>
+                <div className="bg-white border border-slate-200 rounded-lg h-[210px] overflow-y-auto shadow-inner divide-y divide-slate-100 p-2">
+                  {isProcessing && (
+                    <div className="h-full flex flex-col items-center justify-center p-6 text-center gap-3">
+                      <div className="flex justify-between w-full max-w-xs text-sm font-bold text-slate-700">
+                        <span>กำลังเทียบชื่อ-สกุลกับฐานข้อมูล...</span>
+                        <span>{processProgress}%</span>
+                      </div>
+                      <div className="w-full max-w-xs bg-slate-200 h-2 rounded-full overflow-hidden">
+                        <div className="bg-slate-900 h-full transition-all duration-300" style={{ width: `${processProgress}%` }}></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isProcessing && !searchCompleted && (
+                    <div className="h-full flex flex-col items-center justify-center p-6 text-center text-slate-400">
+                      <p className="text-sm font-bold text-slate-600">กดปุ่ม "เริ่มประมวลผลจากชื่อ" ด้านบน</p>
+                      <p className="text-xs text-slate-500 mt-1">ระบบจะค้นหาชื่อ-สกุลนักเรียนในเอกสารแล้วนำมาจับคู่กับรหัสประจำตัวและแผนการเรียน</p>
+                    </div>
+                  )}
+
+                  {!isProcessing && searchCompleted && foundStudentsList.length === 0 && (
+                    <div className="h-full flex flex-col items-center justify-center p-6 text-center text-slate-500">
+                      <AlertCircle className="w-8 h-8 text-amber-500 mb-2" />
+                      <p className="text-sm font-bold">ไม่พบรายชื่อที่ตรงกับฐานข้อมูลในเอกสาร</p>
+                      <p className="text-xs text-slate-400 mt-1">สามารถพิมพ์รายชื่อในกล่องข้อความดิบแล้วกดประมวลผลใหม่ หรือเพิ่มรายชื่อด้วยตนเองในตารางด้านล่าง</p>
+                    </div>
+                  )}
+
+                  {!isProcessing && searchCompleted && foundStudentsList.map((st, idx) => (
+                    <div key={idx} className="p-2.5 hover:bg-slate-50 transition-colors flex items-center justify-between gap-3 text-sm">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {st.isMatched ? (
+                          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-900 truncate">{st.name}</p>
+                          <p className="text-xs text-slate-500 truncate">{st.subject || st.award || 'วิชาการ'}</p>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                      
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {st.isMatched ? (
+                          <>
+                            <span className="bg-slate-100 text-slate-800 font-mono text-xs px-2 py-0.5 rounded font-bold border border-slate-200">
+                              {st.studentId}
+                            </span>
+                            <span className={`text-xs px-2 py-0.5 rounded font-bold ${
+                              st.program === 'EP' ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'bg-blue-50 text-blue-700 border border-blue-200'
+                            }`}>
+                              {st.program === 'EP' ? 'EP' : 'ปกติ'}
+                            </span>
+                          </>
+                        ) : (
+                          <span className="bg-rose-50 text-rose-700 text-xs px-2 py-0.5 rounded font-bold border border-rose-200">
+                            ไม่พบในฐานข้อมูล
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
 
         {/* RESULTS TABLE (Editable before Save) */}
-        {searchCompleted && foundStudentsList.length > 0 && (
+        {searchCompleted && (
           <div className="animate-fade-in">
-            <div className="flex justify-between items-center mb-5">
+            <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-4">
               <div>
-                <h4 className="text-base font-bold text-slate-900">ตรวจทานและแก้ไขก่อนบันทึก</h4>
-                <p className="text-sm text-slate-500 mt-1 font-medium">คุณสามารถแก้ไขรหัสประจำตัว แผนการเรียน หรือลบรายการที่ไม่ต้องการได้</p>
+                <h4 className="text-lg font-bold text-slate-900">ตรวจทานและแก้ไขรายชื่อก่อนบันทึก</h4>
+                <p className="text-sm text-slate-500 font-medium">
+                  คุณสามารถแก้ไขรหัสประจำตัว แผนการเรียน หรือกดเพิ่มรายชื่อเพิ่มเติมได้ตามต้องการ
+                </p>
               </div>
-              <button 
-                onClick={handleSaveSearchRecord}
-                className="px-5 py-2 bg-slate-900 hover:bg-slate-900/90 text-white rounded-lg text-base font-bold transition-colors cursor-pointer shadow-sm flex items-center gap-2"
-              >
-                บันทึกผลงานลงระบบ
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={addNewStudentRow}
+                  className="px-3.5 py-2 border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-lg text-sm font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                >
+                  <Plus size={16} />
+                  เพิ่มรายชื่อ
+                </button>
+                <button 
+                  onClick={handleSaveSearchRecord}
+                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-bold transition-colors cursor-pointer shadow-sm flex items-center gap-2"
+                >
+                  บันทึกผลงานลงระบบ ({foundStudentsList.length})
+                </button>
+              </div>
             </div>
 
             <div className="border border-slate-200 rounded-xl overflow-x-auto bg-white shadow-2xs">
               <table className="w-full text-left text-base whitespace-nowrap">
                 <thead className="bg-slate-50 text-sm font-extrabold text-slate-500 uppercase tracking-wider border-b border-slate-200">
                   <tr>
-                    <th className="px-5 py-4">สถานะค้นหา</th>
-                    <th className="px-5 py-4">ชื่อ-สกุล (จากประกาศ)</th>
-                    <th className="px-5 py-4">รหัสประจำตัว / ห้อง</th>
-                    <th className="px-5 py-4">หลักสูตร (Program)</th>
-                    <th className="px-5 py-4">สาขา / รางวัล</th>
-                    <th className="px-5 py-4 text-right">จัดการ</th>
+                    <th className="px-4 py-3.5">สถานะ</th>
+                    <th className="px-4 py-3.5">ชื่อ-สกุล (จากประกาศ/ค้นหา)</th>
+                    <th className="px-4 py-3.5">รหัสประจำตัว / ห้อง</th>
+                    <th className="px-4 py-3.5">หลักสูตร (Program)</th>
+                    <th className="px-4 py-3.5">สาขา / รางวัล</th>
+                    <th className="px-4 py-3.5 text-right">จัดการ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                  {foundStudentsList.map((st, index) => (
-                    <tr key={index} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-5 py-3">
-                        {st.isMatched ? (
-                          <span className="inline-flex items-center gap-1.5 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md text-sm font-bold border border-emerald-200">
-                            ✓ พบข้อมูล
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 text-rose-700 bg-rose-50 px-2.5 py-1 rounded-md text-sm font-bold border border-rose-200">
-                            ! ไม่พบข้อมูล
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3">
-                        <input 
-                          type="text" 
-                          value={st.name} 
-                          onChange={(e) => editTemporaryItem(index, 'name', e.target.value)}
-                          className="w-full px-3 py-1.5 border border-transparent hover:border-slate-200 focus-visible:border-slate-400 rounded-md focus-visible:outline-hidden transition bg-transparent focus-visible:bg-white text-base text-slate-900"
-                        />
-                      </td>
-                      <td className="px-5 py-3 flex items-center gap-1.5">
-                        <input 
-                          type="text" 
-                          value={st.studentId} 
-                          onChange={(e) => editTemporaryItem(index, 'studentId', e.target.value)}
-                          className={"w-24 px-2 py-1.5 border rounded-md focus-visible:outline-hidden transition text-base font-bold text-center " + (
-                            st.isMatched ? 'border-transparent hover:border-slate-200 bg-transparent focus-visible:bg-white text-slate-900' : 'border-rose-200 bg-rose-50 text-rose-700'
-                          )}
-                        />
-                        <span className="py-1.5 text-slate-300">/</span>
-                        <input 
-                          type="text" 
-                          value={st.room} 
-                          onChange={(e) => editTemporaryItem(index, 'room', e.target.value)}
-                          className="w-14 px-2 py-1.5 border border-transparent hover:border-slate-200 focus-visible:border-slate-400 rounded-md focus-visible:outline-hidden transition bg-transparent focus-visible:bg-white text-base text-center text-slate-700"
-                        />
-                      </td>
-                      <td className="px-5 py-3">
-                        <select
-                          value={st.program}
-                          onChange={(e) => editTemporaryItem(index, 'program', e.target.value)}
-                          className={"px-3 py-1.5 rounded-md border text-sm font-bold focus-visible:outline-hidden cursor-pointer " + (
-                            st.program === 'EP' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 
-                            st.program === 'Normal' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-slate-100 border-slate-200 text-slate-600'
-                          )}
-                        >
-                          <option value="Normal">Normal</option>
-                          <option value="EP">EP</option>
-                          <option value="Unknown">Unknown</option>
-                        </select>
-                      </td>
-                      <td className="px-5 py-3">
-                        <input 
-                          type="text" 
-                          value={st.subject || st.award || ''} 
-                          onChange={(e) => editTemporaryItem(index, 'subject', e.target.value)}
-                          className="w-full min-w-[140px] px-3 py-1.5 border border-transparent hover:border-slate-200 focus-visible:border-slate-400 rounded-md focus-visible:outline-hidden transition bg-transparent focus-visible:bg-white text-base text-slate-700"
-                        />
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        <button 
-                          onClick={() => deleteTemporaryItem(index)}
-                          className="text-slate-400 hover:text-rose-600 transition-colors p-1.5 cursor-pointer"
-                          title="ลบรายการนี้"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
-                        </button>
+                  {foundStudentsList.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
+                        ยังไม่มีรายชื่อในตาราง คลิกปุ่ม "เพิ่มรายชื่อ" หรือกด "เริ่มประมวลผลจากชื่อ"
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    foundStudentsList.map((st, index) => (
+                      <tr key={index} className="hover:bg-slate-50/60 transition-colors">
+                        <td className="px-4 py-3">
+                          {st.isMatched ? (
+                            <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md text-xs font-bold border border-emerald-200">
+                              ✓ พบข้อมูล
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md text-xs font-bold border border-amber-200">
+                              ! รอระบุรหัส
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <input 
+                            type="text" 
+                            value={st.name} 
+                            placeholder="ระบุชื่อ-สกุลนักเรียน..."
+                            onChange={(e) => editTemporaryItem(index, 'name', e.target.value)}
+                            className="w-full min-w-[200px] px-3 py-1.5 border border-slate-200 hover:border-slate-300 focus-visible:border-slate-600 rounded-md focus-visible:outline-hidden transition bg-white text-base text-slate-900 font-semibold"
+                          />
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <input 
+                              type="text" 
+                              value={st.studentId} 
+                              placeholder="รหัส..."
+                              onChange={(e) => editTemporaryItem(index, 'studentId', e.target.value)}
+                              className={"w-24 px-2 py-1.5 border rounded-md focus-visible:outline-hidden transition text-base font-bold text-center " + (
+                                st.isMatched ? 'border-slate-200 bg-slate-50 text-slate-900' : 'border-amber-300 bg-amber-50 text-amber-900'
+                              )}
+                            />
+                            <span className="text-slate-300">/</span>
+                            <input 
+                              type="text" 
+                              value={st.room || ''} 
+                              placeholder="ห้อง"
+                              onChange={(e) => editTemporaryItem(index, 'room', e.target.value)}
+                              className="w-14 px-2 py-1.5 border border-slate-200 hover:border-slate-300 rounded-md focus-visible:outline-hidden transition bg-white text-base text-center text-slate-700 font-semibold"
+                            />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <select
+                            value={st.program || 'Normal'}
+                            onChange={(e) => editTemporaryItem(index, 'program', e.target.value)}
+                            className={"px-3 py-1.5 rounded-md border text-sm font-bold focus-visible:outline-hidden cursor-pointer " + (
+                              st.program === 'EP' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 
+                              st.program === 'Normal' ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-slate-100 border-slate-200 text-slate-600'
+                            )}
+                          >
+                            <option value="Normal">Normal (ภาคปกติ)</option>
+                            <option value="EP">EP (หลักสูตรอังกฤษ)</option>
+                            <option value="Unknown">Unknown</option>
+                          </select>
+                        </td>
+                        <td className="px-4 py-3">
+                          <input 
+                            type="text" 
+                            value={st.subject || st.award || ''} 
+                            placeholder="สาขา / รางวัล..."
+                            onChange={(e) => editTemporaryItem(index, 'subject', e.target.value)}
+                            className="w-full min-w-[140px] px-3 py-1.5 border border-slate-200 hover:border-slate-300 rounded-md focus-visible:outline-hidden transition bg-white text-base text-slate-700 font-medium"
+                          />
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button 
+                            onClick={() => deleteTemporaryItem(index)}
+                            className="text-slate-400 hover:text-rose-600 transition-colors p-1.5 cursor-pointer rounded hover:bg-rose-50"
+                            title="ลบรายการนี้"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
