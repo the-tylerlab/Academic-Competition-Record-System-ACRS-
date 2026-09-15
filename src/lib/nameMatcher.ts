@@ -64,6 +64,9 @@ const TITLE_PREFIXES = [
   'mstr'
 ];
 
+// Target school patterns (Assumption College Thonburi / อัสสัมชัญธนบุรี)
+export const ACT_SCHOOL_REGEX = /(?:โรงเรียน|ร\.ร\.)?\s*อัสสัมชัญ\s*ธนบุรี|อัสสัมชัญธนบุรี|อสธ\.?|ACT|Assumption\s*College\s*Thonburi/i;
+
 /**
  * Remove all title prefixes, numbers, symbols, and extra whitespace
  * Returns strictly the pure First Name + Last Name (ชื่อ-สกุล ล้วนๆ)
@@ -78,6 +81,8 @@ export function cleanAndNormalizeThaiName(rawName: string): string {
     .replace(/^(\d+[\.\)\-:]*|\(+\d+\)+|[-*•#]+|no\.?\s*\d+)\s*/i, '')
     .replace(/^\d{4,6}\s+/, '')
     .replace(/\s*-\s*.*$/, '')
+    // Remove school names if in candidate string
+    .replace(/(?:โรงเรียน|ร\.ร\.)?[^\n\d]{2,30}(?:ธนบุรี|วิทยา|ศึกษา|วิทยาลัย|ราชินี|สาธิต)[^\n]*/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -230,8 +235,10 @@ function extractContextInfo(line: string, surroundingLines: string[]): { subject
 }
 
 /**
- * Scan raw text against students database focusing strictly on MATCHED students
- * ONLY returns students who exist in the database and appear in the document
+ * Scan raw text against students database focusing on MATCHED students
+ * Includes:
+ * 1) Any student in the school roster whose name appears in the document
+ * 2) Any student listed under "โรงเรียนอัสสัมชัญธนบุรี" / "อัสสัมชัญ ธนบุรี" / "ACT"
  */
 export function extractAndMatchStudentsFromText(
   rawText: string,
@@ -246,7 +253,7 @@ export function extractAndMatchStudentsFromText(
 
   const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-  // Scan every student in our school roster against the document text (Matching strictly by First Name + Last Name)
+  // Strategy 1: Scan student roster against document text by First Name + Last Name
   studentPool.forEach(student => {
     const cleanDbName = cleanAndNormalizeThaiName(student.name);
     const { firstName, lastName } = splitFirstAndLastName(student.name);
@@ -265,7 +272,6 @@ export function extractAndMatchStudentsFromText(
       const line = lines[i];
       const cleanLine = cleanAndNormalizeThaiName(line);
       const skelLine = stripThaiVowelsAndTones(cleanLine);
-
       const lineNoSpace = line.replace(/\s+/g, '');
       const targetNoSpace = (firstName + lastName).replace(/\s+/g, '');
       const skelLineNoSpace = stripThaiVowelsAndTones(lineNoSpace);
@@ -304,7 +310,7 @@ export function extractAndMatchStudentsFromText(
       const { subject, award } = extractContextInfo(matchedLine, nearbyLines);
 
       results.push({
-        name: cleanDbName, // Display clean First Name + Last Name
+        name: cleanDbName,
         cleanName: cleanDbName,
         subject,
         award,
@@ -319,6 +325,56 @@ export function extractAndMatchStudentsFromText(
 
       processedStudentIds.add(student.studentId);
       processedNames.add(cleanDbName);
+    }
+  });
+
+  // Strategy 2: Detect any lines that mention "โรงเรียนอัสสัมชัญธนบุรี" / "อัสสัมชัญ ธนบุรี"
+  lines.forEach((line, index) => {
+    if (ACT_SCHOOL_REGEX.test(line)) {
+      // Extract student name from this ACT row
+      // Row pattern: "7  31166  นายธนบูรณ์  พุทธชัย  โรงเรียนอัสสัมชัญธนบุรี"
+      const candidateName = cleanAndNormalizeThaiName(line);
+      if (!candidateName || candidateName.length < 4) return;
+      if (processedNames.has(candidateName)) return;
+
+      const matchedDb = findMatchingStudent(candidateName, studentPool);
+      const nearbyLines = lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 4));
+      const { subject, award } = extractContextInfo(line, nearbyLines);
+
+      if (matchedDb) {
+        if (!processedStudentIds.has(matchedDb.studentId)) {
+          results.push({
+            name: cleanAndNormalizeThaiName(matchedDb.name),
+            cleanName: candidateName,
+            subject,
+            award,
+            isMatched: true,
+            studentId: matchedDb.studentId,
+            grade: matchedDb.grade,
+            room: matchedDb.room,
+            program: matchedDb.program,
+            email: matchedDb.email || '',
+            matchedStudent: matchedDb
+          });
+          processedStudentIds.add(matchedDb.studentId);
+          processedNames.add(candidateName);
+        }
+      } else {
+        // ACT Student found from school name in PDF (even if not yet in database)
+        results.push({
+          name: candidateName,
+          cleanName: candidateName,
+          subject,
+          award,
+          isMatched: true,
+          studentId: "รอระบุรหัส (อสธ.)",
+          grade: "ม.5",
+          room: "1",
+          program: "Normal",
+          email: ""
+        });
+        processedNames.add(candidateName);
+      }
     }
   });
 
