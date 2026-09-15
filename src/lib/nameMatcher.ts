@@ -266,11 +266,18 @@ export function extractAndMatchStudentsFromText(
       const cleanLine = cleanAndNormalizeThaiName(line);
       const skelLine = stripThaiVowelsAndTones(cleanLine);
 
+      const lineNoSpace = line.replace(/\s+/g, '');
+      const targetNoSpace = (firstName + lastName).replace(/\s+/g, '');
+      const skelLineNoSpace = stripThaiVowelsAndTones(lineNoSpace);
+      const skelTargetNoSpace = stripThaiVowelsAndTones(targetNoSpace);
+
       // Check full name without prefix
       if (
         line.includes(cleanDbName) ||
         cleanLine.includes(cleanDbName) ||
+        lineNoSpace.includes(targetNoSpace) ||
         (skelDbName.length >= 4 && skelLine.includes(skelDbName)) ||
+        (skelTargetNoSpace.length >= 4 && skelLineNoSpace.includes(skelTargetNoSpace)) ||
         isNameMatch(cleanDbName, cleanLine)
       ) {
         foundInText = true;
@@ -279,10 +286,10 @@ export function extractAndMatchStudentsFromText(
         break;
       }
 
-      // Check both first name and last name appearing on the same line (regardless of prefix or spacing)
-      if (firstName.length >= 3 && lastName.length >= 3) {
-        const hasFirst = cleanLine.includes(firstName) || (skelFirst.length >= 3 && skelLine.includes(skelFirst));
-        const hasLast = cleanLine.includes(lastName) || (skelLast.length >= 3 && skelLine.includes(skelLast));
+      // Check both first name and last name appearing on the same line
+      if (firstName.length >= 2 && lastName.length >= 2) {
+        const hasFirst = cleanLine.includes(firstName) || (skelFirst.length >= 2 && skelLineNoSpace.includes(skelFirst));
+        const hasLast = cleanLine.includes(lastName) || (skelLast.length >= 2 && skelLineNoSpace.includes(skelLast));
         if (hasFirst && hasLast) {
           foundInText = true;
           matchedLine = line;

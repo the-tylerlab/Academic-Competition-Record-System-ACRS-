@@ -16,14 +16,50 @@ export interface ExtractProgressCallback {
 }
 
 /**
- * High-precision PDF text extraction with automatic 2.5x High-DPI OCR fallback for Thai scanned documents
+ * Reconstruct row text from PDF text items by measuring horizontal X distance gaps
+ * Ensures Thai syllables and tone marks join seamlessly into words
+ */
+function reconstructRowText(rowItems: any[]): string {
+  if (!rowItems || rowItems.length === 0) return '';
+  // Sort items from left to right (X ascending)
+  rowItems.sort((a, b) => a.transform[4] - b.transform[4]);
+
+  let result = '';
+  let lastEndX: number | null = null;
+
+  for (const item of rowItems) {
+    const str = item.str;
+    if (!str && str !== '0') continue;
+
+    const startX = item.transform[4];
+    const width = item.width || (str.length * 6);
+
+    if (lastEndX !== null) {
+      const gap = startX - lastEndX;
+      if (gap > 28) {
+        result += '   '; // Table column separator
+      } else if (gap > 6) {
+        result += ' ';   // Word space
+      }
+      // If gap <= 6: tight letter / vowel ligature -> NO space
+    }
+
+    result += str;
+    lastEndX = startX + width;
+  }
+
+  return result.trim();
+}
+
+/**
+ * Extract all text from PDF directly from vector text layer with accurate table reconstruction
  */
 export async function extractTextFromPdf(
   data: ArrayBuffer | Uint8Array,
   onProgress?: ExtractProgressCallback
 ): Promise<string> {
   try {
-    if (onProgress) onProgress('กำลังโหลดโครงสร้างไฟล์ PDF...', 5);
+    if (onProgress) onProgress('กำลังเปิดไฟล์เอกสาร PDF...', 5);
 
     const loadingTask = pdfjsLib.getDocument({
       data,
@@ -36,27 +72,26 @@ export async function extractTextFromPdf(
     const pdfDoc = await loadingTask.promise;
     const numPages = pdfDoc.numPages;
     let fullText = '';
-    let hasValidVectorText = false;
-    let totalThaiCharCount = 0;
+    let totalTextItemsCount = 0;
 
-    // Pass 1: Try reading direct vector text layer from PDF
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       if (onProgress) {
-        const pageProgress = 5 + Math.round((pageNum / numPages) * 30);
-        onProgress(`กำลังตรวจสอบเลเยอร์ข้อความ หน้า ${pageNum}/${numPages}...`, pageProgress);
+        const pageProgress = 5 + Math.round((pageNum / numPages) * 85);
+        onProgress(`กำลังสกัดข้อความ หน้า ${pageNum}/${numPages}...`, pageProgress);
       }
 
       const page = await pdfDoc.getPage(pageNum);
       const textContent = await page.getTextContent();
       const items = textContent.items as any[];
+      totalTextItemsCount += items.length;
 
       if (items.length > 0) {
-        // Group text items by vertical Y-coordinate to reconstruct table rows accurately
+        // Group items by vertical Y-coordinate (within 4px tolerance)
         const lineMap = new Map<number, any[]>();
         const Y_TOLERANCE = 4;
 
         for (const item of items) {
-          if (!('str' in item) || !item.str.trim()) continue;
+          if (!('str' in item)) continue;
           
           const y = Math.round(item.transform[5]);
           let matchedYKey: number | null = null;
@@ -81,18 +116,10 @@ export async function extractTextFromPdf(
         let pageText = '';
         for (const yKey of sortedYKeys) {
           const rowItems = lineMap.get(yKey)!;
-          // Sort items in the same row from left to right (X ascending)
-          rowItems.sort((a, b) => a.transform[4] - b.transform[4]);
-
-          const rowStr = rowItems.map(i => i.str.trim()).filter(Boolean).join('  ');
+          const rowStr = reconstructRowText(rowItems);
           if (rowStr) {
             pageText += rowStr + '\n';
           }
-        }
-
-        const thaiMatches = pageText.match(/[\u0E00-\u0E7F]/g);
-        if (thaiMatches) {
-          totalThaiCharCount += thaiMatches.length;
         }
 
         if (pageText.trim()) {
@@ -101,24 +128,17 @@ export async function extractTextFromPdf(
       }
     }
 
-    // If vector text had meaningful Thai content (at least 30 Thai chars per page on average)
-    if (totalThaiCharCount > numPages * 15 && fullText.trim().length > 100) {
-      hasValidVectorText = true;
-      if (onProgress) onProgress('สกัดข้อความจากเอกสารเรียบร้อย', 100);
+    // If PDF text layer contains text, use it directly (100% accurate vector text)
+    if (totalTextItemsCount > 10 && fullText.trim().length > 30) {
+      if (onProgress) onProgress('สกัดข้อความเสร็จสมบูรณ์', 100);
       return fullText.trim();
     }
 
-    // Pass 2: High-resolution Thai OCR for scanned PDF pages
-    if (!hasValidVectorText) {
-      if (onProgress) onProgress('เอกสารเป็นภาพสแกน กำลังเตรียมเอนจิน OCR ภาษาไทยความละเอียดสูง...', 40);
-      const ocrResult = await performHighResOcr(pdfDoc, onProgress);
-      if (ocrResult && ocrResult.trim()) {
-        if (onProgress) onProgress('สแกน OCR เสร็จสมบูรณ์', 100);
-        return ocrResult.trim();
-      }
-    }
+    // Fallback ONLY if the document has 0 text items (scanned image only)
+    if (onProgress) onProgress('ไม่พบเลเยอร์ข้อความ กำลังทำ OCR สแกนภาษาไทย...', 90);
+    const ocrText = await performHighResOcr(pdfDoc, onProgress);
+    return ocrText.trim() || fullText.trim();
 
-    return fullText.trim();
   } catch (err: any) {
     console.error('PDF Extraction error:', err);
     throw new Error('ไม่สามารถประมวลผลไฟล์ PDF: ' + (err.message || 'รูปแบบไฟล์ไม่รองรับ'));
@@ -126,7 +146,7 @@ export async function extractTextFromPdf(
 }
 
 /**
- * High-resolution canvas rendering + Binarization for accurate Thai OCR
+ * Fallback OCR for scanned image PDFs
  */
 async function performHighResOcr(
   pdfDoc: any, 
@@ -140,13 +160,12 @@ async function performHighResOcr(
 
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       if (onProgress) {
-        const ocrProgress = 40 + Math.round((pageNum / numPages) * 55);
-        onProgress(`กำลังทำ OCR สแกนภาษาไทย หน้า ${pageNum}/${numPages}...`, ocrProgress);
+        const ocrProgress = 90 + Math.round((pageNum / numPages) * 9);
+        onProgress(`กำลังทำ OCR สแกนหน้า ${pageNum}/${numPages}...`, ocrProgress);
       }
 
       const page = await pdfDoc.getPage(pageNum);
-      // Render at 2.5x scale (approx 300 DPI) for crisp Thai characters and tone marks
-      const viewport = page.getViewport({ scale: 2.5 });
+      const viewport = page.getViewport({ scale: 2.0 });
       
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d', { willReadFrequently: true });
@@ -155,28 +174,9 @@ async function performHighResOcr(
 
       if (context) {
         await page.render({ canvasContext: context, viewport }).promise;
-
-        // Image preprocessing: Enhance contrast & sharpen for black text on white paper
-        const imgData = context.getImageData(0, 0, canvas.width, canvas.height);
-        const d = imgData.data;
-        for (let i = 0; i < d.length; i += 4) {
-          const r = d[i];
-          const g = d[i + 1];
-          const b = d[i + 2];
-          // Grayscale luminosity
-          const v = 0.299 * r + 0.587 * g + 0.114 * b;
-          // High contrast binarization curve
-          const enhanced = v < 165 ? 0 : 255;
-          d[i] = enhanced;
-          d[i + 1] = enhanced;
-          d[i + 2] = enhanced;
-        }
-        context.putImageData(imgData, 0, 0);
-
         const ret = await worker.recognize(canvas);
         if (ret && ret.data && ret.data.text) {
-          const cleanedText = cleanOcrNoise(ret.data.text);
-          fullOcrText += `--- [ หน้า ${pageNum} ] ---\n` + cleanedText + '\n\n';
+          fullOcrText += `--- [ หน้า ${pageNum} ] ---\n` + ret.data.text.trim() + '\n\n';
         }
       }
     }
@@ -190,23 +190,4 @@ async function performHighResOcr(
       await worker.terminate();
     }
   }
-}
-
-/**
- * Filter out OCR garbage symbols and fix common Thai character scan artifacts
- */
-function cleanOcrNoise(text: string): string {
-  if (!text) return '';
-  return text
-    .split('\n')
-    .map(line => {
-      // Clean isolated symbols like `q )`, `เ" 7`, `ad`, `o3 59`
-      const trimmed = line.trim();
-      if (/^[a-zA-Z0-9_\-\.\:\(\)\s]{1,4}$/.test(trimmed) && !/\d{5}/.test(trimmed)) {
-        return '';
-      }
-      return trimmed;
-    })
-    .filter(Boolean)
-    .join('\n');
 }
