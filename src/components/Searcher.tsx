@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import { Upload, ChevronDown, CheckCircle2, AlertCircle, Plus, FileText, Globe, RefreshCw, Sparkles, BookOpen } from 'lucide-react';
+import { Upload, ChevronDown, CheckCircle2, AlertCircle, Plus, FileText, Globe, RefreshCw, Sparkles, BookOpen, Key, Bot } from 'lucide-react';
 import { MOCK_SOURCES, DEFAULT_STUDENTS } from '../mockData';
 import { extractTextFromPdf } from '../lib/pdfExtractor';
 import { extractAndMatchStudentsFromText, findMatchingStudent, cleanAndNormalizeThaiName } from '../lib/nameMatcher';
+import { scanDocumentWithGemini, type GeminiScanResult } from '../lib/geminiScanner';
 
 interface SearcherProps {
   students: any[];
@@ -17,9 +18,16 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
   const [inputType, setInputType] = useState<'file' | 'url'>('file');
   const [customUrl, setCustomUrl] = useState('');
   
+  // AI Scan Engine Mode
+  const [scanEngine, setScanEngine] = useState<'gemini' | 'offline'>('gemini');
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('acrs_gemini_api_key') || import.meta.env.VITE_GEMINI_API_KEY || '');
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [tempApiKey, setTempApiKey] = useState(geminiApiKey);
+
   const [isProcessing, setIsProcessing] = useState(false);
   const [processProgress, setProcessProgress] = useState(0);
   const [searchCompleted, setSearchCompleted] = useState(false);
+  const [uploadedFileObj, setUploadedFileObj] = useState<File | null>(null);
   
   // Real scanned text from file or user input
   const [scannedText, setScannedText] = useState('');
@@ -44,13 +52,129 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
     }
   }, [students]);
 
+  const saveGeminiApiKey = (key: string) => {
+    setGeminiApiKey(key);
+    localStorage.setItem('acrs_gemini_api_key', key);
+    setShowApiKeyModal(false);
+  };
+
+  // Perform Gemini AI Scan on File or Text
+  const handleExecuteGeminiScan = async (targetFile?: File | null, textContent?: string) => {
+    const fileToScan = targetFile || uploadedFileObj;
+    const textToScan = textContent || scannedText;
+
+    if (!fileToScan && (!textToScan || !textToScan.trim())) {
+      alert("กรุณาเลือกไฟล์ PDF หรือวางข้อความประกาศผลก่อนเริ่มสแกนด้วย AI");
+      return;
+    }
+
+    if (!geminiApiKey) {
+      setShowApiKeyModal(true);
+      return;
+    }
+
+    setIsProcessing(true);
+    setSearchCompleted(false);
+    setReadingStatus({ message: 'กำลังเชื่อมต่อ Google Gemini 1.5 Flash Vision AI...', percent: 20 });
+
+    try {
+      const result: GeminiScanResult = await scanDocumentWithGemini(
+        fileToScan || textToScan,
+        geminiApiKey,
+        (statusMsg) => setReadingStatus({ message: statusMsg, percent: 60 })
+      );
+
+      setReadingStatus({ message: 'จับคู่รายชื่อกับฐานข้อมูลนักเรียน (5,721 คน)...', percent: 90 });
+
+      if (result.competitionName) {
+        setRecordMeta(prev => ({
+          ...prev,
+          competitionName: result.competitionName || prev.competitionName,
+          academicYear: result.academicYear || prev.academicYear
+        }));
+      }
+
+      // Match extracted students against database
+      const pool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
+      const matchedList: any[] = [];
+      const seenIds = new Set<string>();
+
+      if (result.students && Array.isArray(result.students)) {
+        for (const st of result.students) {
+          const dbStudent = findMatchingStudent(st.name, pool);
+          if (dbStudent && !seenIds.has(dbStudent.studentId)) {
+            seenIds.add(dbStudent.studentId);
+            matchedList.push({
+              name: cleanAndNormalizeThaiName(dbStudent.name),
+              cleanName: cleanAndNormalizeThaiName(dbStudent.name),
+              subject: st.subject || 'ชีววิทยา (สอวน.)',
+              award: st.award || 'ผ่านการคัดเลือก',
+              isMatched: true,
+              studentId: dbStudent.studentId,
+              grade: dbStudent.grade,
+              room: dbStudent.room,
+              program: dbStudent.program,
+              email: dbStudent.email || ''
+            });
+          } else if (!dbStudent) {
+            // Include unmatched candidate so teacher can verify
+            matchedList.push({
+              name: st.name,
+              cleanName: st.name,
+              subject: st.subject || 'ชีววิทยา (สอวน.)',
+              award: st.award || 'ผ่านการคัดเลือก',
+              isMatched: false,
+              studentId: '',
+              grade: st.grade || 'ม.5',
+              room: '',
+              program: 'Normal',
+              email: ''
+            });
+          }
+        }
+      }
+
+      setFoundStudentsList(matchedList);
+      
+      const summaryText = result.rawSummary ? `[สรุปผลจาก AI]: ${result.rawSummary}\n\n` : '';
+      const jsonText = JSON.stringify(result, null, 2);
+      if (!scannedText || scannedText.startsWith('[ไฟล์แนบ:')) {
+        setScannedText(`${summaryText}รายชื่อที่ AI ตรวจพบ:\n${jsonText}`);
+      }
+
+      setSearchCompleted(true);
+    } catch (err: any) {
+      console.error('Gemini Scan Error:', err);
+      alert('เกิดข้อผิดพลาดในการสแกนด้วย Gemini AI:\n' + err.message);
+      if (err.message?.includes('API Key') || err.message?.includes('API_KEY')) {
+        setShowApiKeyModal(true);
+      }
+    } finally {
+      setIsProcessing(false);
+      setIsFileReading(false);
+    }
+  };
+
   // Handle Real File Upload (PDF, TXT, CSV, Images)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
+      setUploadedFileObj(file);
       setIsFileReading(true);
-      setReadingStatus({ message: 'กำลังอ่านไฟล์ ' + file.name + '...', percent: 15 });
       setSearchCompleted(false);
+
+      if (scanEngine === 'gemini') {
+        if (!geminiApiKey) {
+          setShowApiKeyModal(true);
+          setIsFileReading(false);
+          return;
+        }
+        await handleExecuteGeminiScan(file);
+        return;
+      }
+
+      // Fallback offline parser
+      setReadingStatus({ message: 'กำลังอ่านไฟล์ ' + file.name + '...', percent: 15 });
       setScannedText('');
 
       try {
@@ -77,7 +201,6 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
         setSelectedSource(source);
         setScannedText(extracted);
 
-        // Auto-detect competition name
         if (extracted) {
           if (extracted.includes('ชีววิทยา') && extracted.includes('สอวน')) {
             setRecordMeta(prev => ({ ...prev, competitionName: "การสอบคัดเลือกโอลิมปิกวิชาการค่ายที่ 1 สาขาวิชาชีววิทยา สอวน. ปีการศึกษา 2569" }));
@@ -85,7 +208,6 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
             setRecordMeta(prev => ({ ...prev, competitionName: "การแข่งขันคัดเลือกโอลิมปิกวิชาการ สอวน. ประจำปีการศึกษา 2569" }));
           }
 
-          // Automatically process matching immediately
           const pool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
           const processedList = extractAndMatchStudentsFromText(extracted, pool);
           setFoundStudentsList(processedList);
@@ -257,7 +379,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
     <div className="flex flex-col gap-6 animate-fade-in text-slate-900">
       <div className="bg-white p-6 md:p-8 rounded-xl border border-slate-200 shadow-2xs">
         
-        <div className="mb-6 border-b border-slate-100 pb-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="mb-6 border-b border-slate-100 pb-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
               <span>ค้นหาและจับคู่นักเรียนในฐานข้อมูลโรงเรียน</span>
@@ -266,9 +388,56 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
               สแกนรายชื่อจากเอกสารประกาศผล และแสดงเฉพาะนักเรียนที่ตรงกับฐานข้อมูลของโรงเรียน ({activeStudentsPool.length} คน)
             </p>
           </div>
-          <div className="text-sm font-semibold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 flex items-center gap-2 w-fit">
-            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            ฐานข้อมูลนักเรียน: <strong className="text-slate-900">{activeStudentsPool.length} คน</strong>
+          
+          <div className="flex items-center flex-wrap gap-2">
+            {/* Engine Selector */}
+            <div className="bg-slate-100 p-1 rounded-lg border border-slate-200 flex items-center gap-1 shadow-3xs text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setScanEngine('gemini')}
+                className={`px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
+                  scanEngine === 'gemini' 
+                    ? 'bg-indigo-600 text-white shadow-xs' 
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Bot size={14} />
+                <span>Google Gemini 1.5 Flash AI</span>
+                <span className="bg-amber-400 text-slate-900 text-[10px] px-1 py-0.2 rounded font-extrabold uppercase">แม่นยำ</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setScanEngine('offline')}
+                className={`px-3 py-1.5 rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
+                  scanEngine === 'offline' 
+                    ? 'bg-slate-800 text-white shadow-xs' 
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>Offline OCR</span>
+              </button>
+            </div>
+
+            {/* API Key Config Button */}
+            <button
+              type="button"
+              onClick={() => { setTempApiKey(geminiApiKey); setShowApiKeyModal(true); }}
+              className={`text-xs px-2.5 py-1.5 rounded-lg border font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                geminiApiKey 
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' 
+                  : 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100 animate-pulse'
+              }`}
+              title="ตั้งค่า Gemini API Key"
+            >
+              <Key size={13} />
+              <span>{geminiApiKey ? 'API Key พร้อมใช้' : 'ตั้งค่า API Key'}</span>
+            </button>
+
+            <div className="text-xs font-semibold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              ฐานข้อมูล: <strong className="text-slate-900">{activeStudentsPool.length} คน</strong>
+            </div>
           </div>
         </div>
 
@@ -436,23 +605,35 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
               <FileText size={16} className="text-slate-500" />
               ข้อความที่สกัดได้จากเอกสาร (RAW TEXT)
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center flex-wrap gap-2">
+              {/* Primary: Gemini AI Scan Button */}
               <button 
-                onClick={handleIdSearchAndExtract}
-                disabled={isProcessing || isFileReading || !scannedText.trim()}
-                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-base font-bold transition-all disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-2"
+                onClick={() => handleExecuteGeminiScan()}
+                disabled={isProcessing || isFileReading || (!uploadedFileObj && !scannedText.trim())}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-bold transition-all disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
+                title="ใช้ Google Gemini 1.5 Flash Vision AI สแกนตารางและรายชื่อ ร.ร.อัสสัมชัญธนบุรี โดยตรง"
               >
                 {isProcessing ? (
                   <>
-                    <RefreshCw size={18} className="animate-spin" />
-                    กำลังประมวลผลจากชื่อ...
+                    <RefreshCw size={16} className="animate-spin" />
+                    <span>Gemini กำลังอ่านไฟล์...</span>
                   </>
                 ) : (
                   <>
-                    <span>เริ่มประมวลผลจากชื่อ</span>
-                    <span className="text-slate-400">&rarr;</span>
+                    <Bot size={16} />
+                    <span>สแกนด้วย Gemini AI</span>
+                    <Sparkles size={14} className="text-amber-300" />
                   </>
                 )}
+              </button>
+
+              {/* Secondary: Local Process Button */}
+              <button 
+                onClick={handleIdSearchAndExtract}
+                disabled={isProcessing || isFileReading || !scannedText.trim()}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-sm font-bold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+              >
+                <span>เทียบชื่อธรรมดา (Local)</span>
               </button>
             </div>
           </div>
@@ -679,6 +860,82 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           </div>
         )}
       </div>
+
+      {/* GEMINI API KEY CONFIG MODAL */}
+      {showApiKeyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 flex flex-col gap-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
+                  <Bot size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">ตั้งค่า Google Gemini API Key</h3>
+                  <p className="text-xs text-slate-500">สำหรับระบบสแกนเอกสาร PDF และรูปภาพด้วย Vision AI</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowApiKeyModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-xl font-bold p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3.5 text-xs text-amber-900 space-y-1.5">
+              <p className="font-bold flex items-center gap-1.5 text-amber-950">
+                <Sparkles size={14} className="text-amber-600" />
+                Google Gemini API ให้ใช้งานฟรี 1,500 ครั้ง/วัน
+              </p>
+              <p className="text-slate-600 leading-relaxed">
+                คุณสามารถสร้าง API Key ฟรีได้จาก <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-indigo-600 font-bold underline hover:text-indigo-800">Google AI Studio (คลิกที่นี่)</a> ด้วยบัญชี Google
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">
+                ระบุ Google Gemini API Key:
+              </label>
+              <div className="relative">
+                <input 
+                  type="password"
+                  value={tempApiKey}
+                  onChange={(e) => setTempApiKey(e.target.value)}
+                  placeholder="AIzaSy..."
+                  className="w-full px-4 py-2.5 border border-slate-300 rounded-xl font-mono text-sm focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:outline-hidden text-slate-900"
+                />
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1.5">
+                API Key จะถูกบันทึกไว้อย่างปลอดภัยในเบราว์เซอร์ของคุณ (LocalStorage)
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowApiKeyModal(false)}
+                className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  saveGeminiApiKey(tempApiKey.trim());
+                  if (tempApiKey.trim() && uploadedFileObj) {
+                    handleExecuteGeminiScan(uploadedFileObj);
+                  }
+                }}
+                disabled={!tempApiKey.trim()}
+                className="px-5 py-2 text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md transition disabled:opacity-50 cursor-pointer"
+              >
+                บันทึก API Key
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
