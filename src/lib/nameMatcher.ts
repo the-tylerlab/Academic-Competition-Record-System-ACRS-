@@ -25,7 +25,7 @@ export interface MatchedResult {
   matchedStudent?: Student;
 }
 
-// Common Thai & English title prefixes
+// All Thai & English title prefixes
 const TITLE_PREFIXES = [
   'เด็กชาย',
   'เด็กหญิง',
@@ -36,14 +36,22 @@ const TITLE_PREFIXES = [
   'ด.ญ.',
   'ด.ช',
   'ด.ญ',
+  'ดช.',
+  'ดญ.',
+  'ดช',
+  'ดญ',
   'น.ส.',
   'น.ส',
+  'นส.',
+  'นส',
   'อาจารย์',
   'ครู',
   'ดร.',
+  'ดร',
   'ผศ.',
   'รศ.',
   'ศ.',
+  'อ.',
   'mr.',
   'mr',
   'miss',
@@ -57,48 +65,46 @@ const TITLE_PREFIXES = [
 ];
 
 /**
- * Remove title prefixes, punctuation, surrounding notes, and normalize spaces
+ * Remove all title prefixes, numbers, symbols, and extra whitespace
+ * Returns strictly the pure First Name + Last Name (ชื่อ-สกุล ล้วนๆ)
  */
 export function cleanAndNormalizeThaiName(rawName: string): string {
   if (!rawName) return '';
 
-  let name = rawName.trim();
+  let name = rawName.trim()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\{[^}]*\}/g, ' ')
+    .replace(/^(\d+[\.\)\-:]*|\(+\d+\)+|[-*•#]+|no\.?\s*\d+)\s*/i, '')
+    .replace(/^\d{4,6}\s+/, '')
+    .replace(/\s*-\s*.*$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  // Remove parenthesis and brackets content
-  name = name.replace(/\([^)]*\)/g, ' ');
-  name = name.replace(/\[[^\]]*\]/g, ' ');
-  name = name.replace(/\{[^}]*\}/g, ' ');
-
-  // Remove leading numbers or bullets (e.g. "1.", "2)", "•", "-", "30031")
-  name = name.replace(/^(\d+[\.\)\-:]*|\(+\d+\)+|[-*•#]+|no\.?\s*\d+)\s*/i, '');
-
-  // Remove exam id if attached at beginning (e.g. "30031 ด.ช.จิรเดช")
-  name = name.replace(/^\d{4,6}\s+/, '');
-
-  // Remove award suffixes like "- ผ่านเข้ารอบสอง", "- ชนะเลิศ"
-  name = name.replace(/\s*-\s*.*$/, '');
-
-  // Normalize spaces first
-  name = name.replace(/\s+/g, ' ').trim();
-
-  // Check and strip prefixes
-  for (const prefix of TITLE_PREFIXES) {
-    const isThai = !/^[a-zA-Z]/.test(prefix);
-    if (isThai) {
-      if (name.startsWith(prefix)) {
-        name = name.substring(prefix.length).trim();
-        break;
-      }
-    } else {
-      const regex = new RegExp(`^${prefix}\\s*`, 'i');
-      if (regex.test(name)) {
-        name = name.replace(regex, '').trim();
-        break;
+  // Strip all title prefixes repeatedly in case of multiple prefixes
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const prefix of TITLE_PREFIXES) {
+      const isThai = !/^[a-zA-Z]/.test(prefix);
+      if (isThai) {
+        if (name.startsWith(prefix)) {
+          name = name.substring(prefix.length).trim();
+          stripped = true;
+          break;
+        }
+      } else {
+        const regex = new RegExp(`^${prefix}\\s*`, 'i');
+        if (regex.test(name)) {
+          name = name.replace(regex, '').trim();
+          stripped = true;
+          break;
+        }
       }
     }
   }
 
-  // Remove any remaining unwanted non-letter characters (keep Thai, English letters, and space)
+  // Remove non-letter symbols (keep Thai, English letters, and space)
   name = name.replace(/[^\u0E00-\u0E7Fa-zA-Z\s]/g, ' ');
   name = name.replace(/\s+/g, ' ').trim();
 
@@ -110,70 +116,43 @@ export function cleanAndNormalizeThaiName(rawName: string): string {
  */
 export function stripThaiVowelsAndTones(str: string): string {
   if (!str) return '';
-  // Thai vowels and tone marks unicode range: \u0E30-\u0E3A (Sara A to Phinthu), \u0E47-\u0E4E (Maitaikhu to Yamakkan)
   return str.replace(/[\u0E30-\u0E3A\u0E47-\u0E4E\s]/g, '').toLowerCase();
 }
 
 /**
- * Levenshtein distance for fuzzy typo correction
+ * Extract split First Name and Last Name
  */
-function levenshteinDistance(s1: string, s2: string): number {
-  const m = s1.length;
-  const n = s2.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
-
-  for (let i = 0; i <= m; i++) dp[i][0] = i;
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (s1[i - 1] === s2[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1];
-      } else {
-        dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-      }
-    }
-  }
-  return dp[m][n];
-}
-
-function calculateSimilarity(s1: string, s2: string): number {
-  if (!s1 || !s2) return 0;
-  if (s1 === s2) return 1;
-  const distance = levenshteinDistance(s1, s2);
-  const maxLen = Math.max(s1.length, s2.length);
-  return (maxLen - distance) / maxLen;
+export function splitFirstAndLastName(name: string): { firstName: string; lastName: string } {
+  const clean = cleanAndNormalizeThaiName(name);
+  const parts = clean.split(' ').filter(Boolean);
+  if (parts.length === 0) return { firstName: '', lastName: '' };
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' ')
+  };
 }
 
 /**
- * Compare two Thai names with multi-layer exact, skeleton, and fuzzy similarity
+ * Compare two Thai names based STRICTLY on First Name + Last Name (ชื่อ-สกุล)
  */
 export function isNameMatch(dbName: string, queryName: string): boolean {
   if (!dbName || !queryName) return false;
-
-  const rawDb = dbName.trim().toLowerCase();
-  const rawQuery = queryName.trim().toLowerCase();
-
-  // 1. Exact raw or includes
-  if (rawDb === rawQuery) return true;
-  if (rawDb.includes(rawQuery) || rawQuery.includes(rawDb)) {
-    if (Math.min(rawDb.length, rawQuery.length) >= 4) return true;
-  }
 
   const cleanDb = cleanAndNormalizeThaiName(dbName).toLowerCase();
   const cleanQuery = cleanAndNormalizeThaiName(queryName).toLowerCase();
 
   if (!cleanDb || !cleanQuery) return false;
 
-  // 2. Clean exact match
+  // 1. Direct match on pure First Name + Last Name
   if (cleanDb === cleanQuery) return true;
 
-  // 3. Spaceless match
+  // 2. Spaceless match (handling Thai no-space formatting)
   const noSpaceDb = cleanDb.replace(/\s+/g, '');
   const noSpaceQuery = cleanQuery.replace(/\s+/g, '');
   if (noSpaceDb === noSpaceQuery) return true;
 
-  // 4. Consonant skeleton match (tolerance for OCR missing upper/lower vowels & tones)
+  // 3. Consonant skeleton match (ignoring OCR vowel/tone typos)
   const skelDb = stripThaiVowelsAndTones(cleanDb);
   const skelQuery = stripThaiVowelsAndTones(cleanQuery);
   if (skelDb.length >= 4 && skelQuery.length >= 4) {
@@ -181,7 +160,7 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
     if (skelDb.includes(skelQuery) || skelQuery.includes(skelDb)) return true;
   }
 
-  // 5. First name & Last name matching
+  // 4. First name & Last name matching
   const dbParts = cleanDb.split(' ').filter(Boolean);
   const queryParts = cleanQuery.split(' ').filter(Boolean);
 
@@ -191,7 +170,6 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
     const queryFirst = queryParts[0];
     const queryLast = queryParts[queryParts.length - 1];
 
-    // Check skeleton of first and last name
     const skelFirstDb = stripThaiVowelsAndTones(dbFirst);
     const skelFirstQuery = stripThaiVowelsAndTones(queryFirst);
     const skelLastDb = stripThaiVowelsAndTones(dbLast);
@@ -201,16 +179,6 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
       if (skelLastDb === skelLastQuery || skelLastDb.startsWith(skelLastQuery) || skelLastQuery.startsWith(skelLastDb)) {
         return true;
       }
-      if (calculateSimilarity(dbLast, queryLast) >= 0.75) {
-        return true;
-      }
-    }
-  }
-
-  // 6. Overall fuzzy similarity > 82%
-  if (cleanDb.length >= 6 && cleanQuery.length >= 6) {
-    if (calculateSimilarity(cleanDb, cleanQuery) >= 0.82) {
-      return true;
     }
   }
 
@@ -218,7 +186,7 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
 }
 
 /**
- * Find matching student from student roster
+ * Find matching student from student roster by pure Name - Surname
  */
 export function findMatchingStudent(targetName: string, students: Student[]): Student | null {
   const studentPool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
@@ -232,7 +200,7 @@ export function findMatchingStudent(targetName: string, students: Student[]): St
 }
 
 /**
- * Extract surrounding context like subject or award
+ * Extract context info (subject / award)
  */
 function extractContextInfo(line: string, surroundingLines: string[]): { subject: string; award: string } {
   let subject = '';
@@ -262,7 +230,7 @@ function extractContextInfo(line: string, surroundingLines: string[]): { subject
 }
 
 /**
- * Scan raw text against students database and pattern extraction
+ * Scan raw text against students database focusing strictly on First Name + Last Name (ชื่อ-สกุล)
  */
 export function extractAndMatchStudentsFromText(
   rawText: string,
@@ -277,10 +245,15 @@ export function extractAndMatchStudentsFromText(
 
   const lines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
 
-  // Strategy 1: Scan every student in our school database against the entire rawText (including OCR text)
+  // Strategy 1: Scan every student in our school roster against the document text (Matching strictly by First Name + Last Name)
   studentPool.forEach(student => {
     const cleanDbName = cleanAndNormalizeThaiName(student.name);
+    const { firstName, lastName } = splitFirstAndLastName(student.name);
     const skelDbName = stripThaiVowelsAndTones(cleanDbName);
+    const skelFirst = stripThaiVowelsAndTones(firstName);
+    const skelLast = stripThaiVowelsAndTones(lastName);
+
+    if (!cleanDbName || cleanDbName.length < 3) return;
 
     let foundInText = false;
     let matchedLine = '';
@@ -291,16 +264,29 @@ export function extractAndMatchStudentsFromText(
       const cleanLine = cleanAndNormalizeThaiName(line);
       const skelLine = stripThaiVowelsAndTones(cleanLine);
 
+      // Check full name without prefix
       if (
-        line.includes(student.name) ||
-        (cleanDbName.length >= 4 && cleanLine.includes(cleanDbName)) ||
+        line.includes(cleanDbName) ||
+        cleanLine.includes(cleanDbName) ||
         (skelDbName.length >= 4 && skelLine.includes(skelDbName)) ||
-        isNameMatch(student.name, line)
+        isNameMatch(cleanDbName, cleanLine)
       ) {
         foundInText = true;
         matchedLine = line;
         lineIndex = i;
         break;
+      }
+
+      // Check both first name and last name appearing on the same line (regardless of prefix or spacing)
+      if (firstName.length >= 3 && lastName.length >= 3) {
+        const hasFirst = cleanLine.includes(firstName) || (skelFirst.length >= 3 && skelLine.includes(skelFirst));
+        const hasLast = cleanLine.includes(lastName) || (skelLast.length >= 3 && skelLine.includes(skelLast));
+        if (hasFirst && hasLast) {
+          foundInText = true;
+          matchedLine = line;
+          lineIndex = i;
+          break;
+        }
       }
     }
 
@@ -309,7 +295,7 @@ export function extractAndMatchStudentsFromText(
       const { subject, award } = extractContextInfo(matchedLine, nearbyLines);
 
       results.push({
-        name: student.name,
+        name: cleanDbName, // Display clean First Name + Last Name
         cleanName: cleanDbName,
         subject,
         award,
@@ -327,7 +313,7 @@ export function extractAndMatchStudentsFromText(
     }
   });
 
-  // Strategy 2: Extract candidate names from lines for students outside or unlinked
+  // Strategy 2: Extract candidate names from document lines for unlinked/external participants
   const NAME_LINE_REGEX = /(?:(?:[0-9]+[\.\)\-]|[-*•])\s*)?(?:(นาย|นางสาว|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|ด\.ช|ด\.ญ|น\.ส\.|น\.ส|นาง|Mr\.|Miss|Mrs\.|Master)\s*([ก-๙a-zA-Z]+(?:\s+[ก-๙a-zA-Z]+)*))/g;
 
   lines.forEach((line, index) => {
@@ -339,7 +325,6 @@ export function extractAndMatchStudentsFromText(
     let match: RegExpExecArray | null;
     const regex = new RegExp(NAME_LINE_REGEX);
     while ((match = regex.exec(line)) !== null) {
-      const prefix = match[1] || '';
       let namePart = (match[2] || '').trim();
       
       let schoolAffiliation = '';
@@ -350,22 +335,23 @@ export function extractAndMatchStudentsFromText(
       }
 
       namePart = namePart.replace(/\s+/g, ' ');
-      const candidateFullName = `${prefix}${prefix.endsWith('.') ? ' ' : ' '}${namePart}`.trim();
-      const cleanCandidate = cleanAndNormalizeThaiName(candidateFullName);
+      // Pure First Name - Last Name without prefix
+      const pureCandidateName = cleanAndNormalizeThaiName(namePart);
 
-      if (!cleanCandidate || cleanCandidate.length < 4) continue;
-      if (processedNames.has(cleanCandidate)) continue;
+      if (!pureCandidateName || pureCandidateName.length < 4) continue;
+      if (processedNames.has(pureCandidateName)) continue;
 
-      const matchedDb = findMatchingStudent(candidateFullName, studentPool);
+      const matchedDb = findMatchingStudent(pureCandidateName, studentPool);
       const nearbyLines = lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 4));
       const { subject, award } = extractContextInfo(line, nearbyLines);
       const finalSubject = subject || (schoolAffiliation ? `ชีววิทยา / ${schoolAffiliation}` : 'ชีววิทยา (สอวน.)');
 
       if (matchedDb) {
         if (!processedStudentIds.has(matchedDb.studentId)) {
+          const cleanMatchedName = cleanAndNormalizeThaiName(matchedDb.name);
           results.push({
-            name: matchedDb.name,
-            cleanName: cleanCandidate,
+            name: cleanMatchedName,
+            cleanName: pureCandidateName,
             subject: finalSubject,
             award,
             isMatched: true,
@@ -377,13 +363,13 @@ export function extractAndMatchStudentsFromText(
             matchedStudent: matchedDb
           });
           processedStudentIds.add(matchedDb.studentId);
-          processedNames.add(cleanCandidate);
+          processedNames.add(pureCandidateName);
         }
       } else {
-        // Unmatched student candidate from document
+        // Unmatched student candidate from document (Display as pure First Name + Last Name)
         results.push({
-          name: candidateFullName,
-          cleanName: cleanCandidate,
+          name: pureCandidateName,
+          cleanName: pureCandidateName,
           subject: finalSubject,
           award,
           isMatched: false,
@@ -393,7 +379,7 @@ export function extractAndMatchStudentsFromText(
           program: 'Unknown',
           email: 'N/A'
         });
-        processedNames.add(cleanCandidate);
+        processedNames.add(pureCandidateName);
       }
     }
   });
