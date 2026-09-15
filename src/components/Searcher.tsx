@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Upload, ChevronDown, CheckCircle2, AlertCircle, Plus, FileText, Globe, RefreshCw, Sparkles, BookOpen } from 'lucide-react';
 import { MOCK_SOURCES, DEFAULT_STUDENTS } from '../mockData';
 import { extractTextFromPdf } from '../lib/pdfExtractor';
@@ -34,6 +34,15 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
     academicYear: "2569",
     notes: ""
   });
+
+  // Re-run matching automatically whenever students database finishes loading from Supabase
+  useEffect(() => {
+    if (scannedText && scannedText.trim() && students && students.length > 0) {
+      const processedList = extractAndMatchStudentsFromText(scannedText, students);
+      setFoundStudentsList(processedList);
+      setSearchCompleted(true);
+    }
+  }, [students]);
 
   // Handle Real File Upload (PDF, TXT, CSV, Images)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -75,6 +84,12 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           } else if (extracted.includes('โอลิมปิกวิชาการ') || extracted.includes('สอวน')) {
             setRecordMeta(prev => ({ ...prev, competitionName: "การแข่งขันคัดเลือกโอลิมปิกวิชาการ สอวน. ประจำปีการศึกษา 2569" }));
           }
+
+          // Automatically process matching immediately
+          const pool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
+          const processedList = extractAndMatchStudentsFromText(extracted, pool);
+          setFoundStudentsList(processedList);
+          setSearchCompleted(true);
         }
       } catch (err: any) {
         console.error('File read error:', err);
@@ -90,7 +105,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
     const mock = MOCK_SOURCES[mockIndex];
     setSelectedSource(mock);
     setScannedText(mock.rawText);
-    setSearchCompleted(false);
+    
     if (mockIndex === 0) {
       setRecordMeta(prev => ({ ...prev, competitionName: "การแข่งขันคัดเลือกโอลิมปิกวิชาการ สอวน. ประจำปีการศึกษา 2569" }));
     } else if (mockIndex === 1) {
@@ -98,6 +113,11 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
     } else {
       setRecordMeta(prev => ({ ...prev, competitionName: "การพิจารณาทุนการเรียนดีเด่น ประจำปีการศึกษา 2569" }));
     }
+
+    const pool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
+    const processedList = extractAndMatchStudentsFromText(mock.rawText, pool);
+    setFoundStudentsList(processedList);
+    setSearchCompleted(true);
   };
 
   const handleIdSearchAndExtract = () => {

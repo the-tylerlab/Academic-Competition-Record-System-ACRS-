@@ -336,8 +336,18 @@ export function extractAndMatchStudentsFromText(
   lines.forEach((line, index) => {
     if (ACT_SCHOOL_REGEX.test(line)) {
       // Extract student name from this ACT row
-      // Row pattern: "7  31166  นายธนบูรณ์  พุทธชัย  โรงเรียนอัสสัมชัญธนบุรี"
-      const candidateName = cleanAndNormalizeThaiName(line);
+      // Row pattern 1: "7  31166  นายธนบูรณ์  พุทธชัย  โรงเรียนอัสสัมชัญธนบุรี"
+      // Row pattern 2: Line 1: "นายธนบูรณ์ พุทธชัย", Line 2: "โรงเรียนอัสสัมชัญธนบุรี"
+      let candidateName = cleanAndNormalizeThaiName(line);
+      if (!candidateName || candidateName.length < 4) {
+        if (index > 0) {
+          candidateName = cleanAndNormalizeThaiName(lines[index - 1]);
+        }
+        if ((!candidateName || candidateName.length < 4) && index < lines.length - 1) {
+          candidateName = cleanAndNormalizeThaiName(lines[index + 1]);
+        }
+      }
+
       if (!candidateName || candidateName.length < 4) return;
       if (processedNames.has(candidateName)) return;
 

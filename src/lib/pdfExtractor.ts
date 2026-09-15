@@ -1,15 +1,9 @@
 import * as pdfjsLib from 'pdfjs-dist';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { createWorker } from 'tesseract.js';
 
-// Setup pdfjs worker
-try {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    'pdfjs-dist/build/pdf.worker.min.mjs',
-    import.meta.url
-  ).toString();
-} catch {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-}
+// Setup pdfjs worker reliably for Vite
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 export interface ExtractProgressCallback {
   (message: string, progress: number): void;
