@@ -1,4 +1,4 @@
-// Service for scanning documents using Google Gemini Vision AI with Auto-Model Selection
+// Service for scanning documents using Google Gemini Vision AI with Multimodal Filtering
 
 export interface GeminiScannedStudent {
   name: string;
@@ -34,50 +34,61 @@ export async function fileToBase64(file: File): Promise<{ base64: string; mimeTy
 }
 
 /**
- * Auto-detect the best available Gemini model for this API key
+ * Auto-detect available Vision/Multimodal Gemini models for this API key
  */
-async function getAvailableModelList(apiKey: string): Promise<string[]> {
+async function getAvailableVisionModels(apiKey: string): Promise<string[]> {
+  const isExcluded = (name: string) => {
+    return /tts|audio|embed|imagen|music|speech|whisper|realtime/i.test(name);
+  };
+
+  const prioritized = [
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash-002',
+    'gemini-1.5-flash-001',
+    'gemini-1.5-flash-8b',
+    'gemini-2.0-flash-exp',
+    'gemini-1.5-pro-latest',
+    'gemini-1.5-pro',
+    'gemini-2.5-flash'
+  ];
+
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`);
     if (res.ok) {
       const data = await res.json();
       const models: any[] = data.models || [];
       const usable = models
-        .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+        .filter((m: any) => 
+          m.supportedGenerationMethods?.includes('generateContent') &&
+          !isExcluded(m.name)
+        )
         .map((m: any) => m.name.replace('models/', ''));
 
-      const preferred = [
-        'gemini-2.0-flash',
-        'gemini-1.5-flash-latest',
-        'gemini-1.5-flash',
-        'gemini-1.5-flash-002',
-        'gemini-1.5-flash-001',
-        'gemini-2.0-flash-exp',
-        'gemini-1.5-pro-latest',
-        'gemini-1.5-pro'
-      ];
-
-      const sorted = preferred.filter(p => usable.includes(p));
-      for (const u of usable) {
-        if (!sorted.includes(u) && (u.includes('gemini') || u.includes('flash'))) {
-          sorted.push(u);
+      const result: string[] = [];
+      for (const p of prioritized) {
+        if (usable.includes(p)) {
+          result.push(p);
         }
       }
 
-      if (sorted.length > 0) return sorted;
+      for (const u of usable) {
+        if (!result.includes(u) && !isExcluded(u) && (u.includes('flash') || u.includes('pro') || u.includes('gemini'))) {
+          result.push(u);
+        }
+      }
+
+      if (result.length > 0) {
+        return result;
+      }
     }
   } catch (err) {
     console.warn('Could not auto-list Gemini models:', err);
   }
 
-  // Default fallback sequence
-  return [
-    'gemini-2.0-flash',
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-002',
-    'gemini-1.5-pro'
-  ];
+  // Fallback prioritized list
+  return prioritized;
 }
 
 /**
@@ -97,8 +108,8 @@ export async function scanDocumentWithGemini(
     throw new Error('ไม่พบ Gemini API Key กรุณาระบุ Gemini API Key ในการตั้งค่า');
   }
 
-  onProgress?.('กำลังค้นหาโมเดล AI ที่พร้อมใช้งาน...');
-  const candidateModels = await getAvailableModelList(activeKey);
+  onProgress?.('กำลังค้นหาโมเดล Vision AI ที่พร้อมใช้งาน...');
+  const candidateModels = await getAvailableVisionModels(activeKey);
 
   const promptText = `
 คุณคือระบบ AI ผู้เชี่ยวชาญการอ่านเอกสารประกาศผลการแข่งขันทางวิชาการและสอบวัดระดับ (เช่น สอวน., สพฐ., สสวท., เพชรยอดมงกุฎ, ศิลปหัตถกรรม)
@@ -165,33 +176,26 @@ export async function scanDocumentWithGemini(
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const message = errorData?.error?.message || `HTTP ${response.status} ${response.statusText}`;
-        
-        // If model not found (404), try next candidate model
-        if (response.status === 404 || message.includes('not found') || message.includes('not supported')) {
-          console.warn(`Model ${modelName} returned 404/not supported, trying next model...`);
-          lastError = new Error(`Model ${modelName}: ${message}`);
-          continue;
-        }
-
-        throw new Error(`Gemini API Error: ${message}`);
+        console.warn(`Model ${modelName} returned error (${response.status}): ${message}, trying next candidate...`);
+        lastError = new Error(message);
+        continue;
       }
 
       const data = await response.json();
       const rawResponseText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
       if (!rawResponseText) {
-        throw new Error('ไม่ได้รับข้อมูลตอบกลับจาก AI');
+        lastError = new Error(`โมเดล ${modelName} ไม่ได้ส่งเนื้อหากลับมา`);
+        continue;
       }
 
       const parsedResult = JSON.parse(rawResponseText) as GeminiScanResult;
       return parsedResult;
     } catch (err: any) {
+      console.warn(`Model ${modelName} execution exception:`, err);
       lastError = err;
-      if (err.message && !err.message.includes('not found') && !err.message.includes('404')) {
-        throw err;
-      }
     }
   }
 
-  throw lastError || new Error('ไม่สามารถเชื่อมต่อโมเดล Gemini ใดๆ ได้');
+  throw lastError || new Error('ไม่สามารถประมวลผลไฟล์ด้วยโมเดล Gemini Vision ที่มีอยู่ได้');
 }
