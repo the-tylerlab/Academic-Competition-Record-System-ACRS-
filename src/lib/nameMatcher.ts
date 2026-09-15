@@ -247,43 +247,31 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
 export function findMatchingStudent(targetName: string, students: Student[]): Student | null {
   const studentPool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
   const cleanTarget = cleanAndNormalizeThaiName(targetName);
-  const skelTarget = stripThaiVowelsAndTones(cleanTarget);
+  if (!cleanTarget) return null;
 
-  // 1. Direct match
+  // 1. Direct match with isNameMatch
   for (const st of studentPool) {
     if (isNameMatch(st.name, targetName)) {
       return st;
     }
   }
 
-  // 2. Full Skeleton match
-  if (skelTarget.length >= 4) {
-    for (const st of studentPool) {
-      const cleanDb = cleanAndNormalizeThaiName(st.name);
-      const skelDb = stripThaiVowelsAndTones(cleanDb);
-      if (skelDb === skelTarget || skelDb.includes(skelTarget) || skelTarget.includes(skelDb)) {
-        return st;
-      }
-      if (fuzzySubstringMatch(skelTarget, skelDb, 1)) {
-        return st;
-      }
-    }
-  }
-
-  // 3. First + Last name skeleton match
+  // 2. Strict First + Last name matching (both must have >= 3 consonant skeleton characters)
   const parts = cleanTarget.split(' ').filter(Boolean);
   if (parts.length >= 2) {
     const firstSkel = stripThaiVowelsAndTones(parts[0]);
     const lastSkel = stripThaiVowelsAndTones(parts.slice(1).join(''));
+
     if (firstSkel.length >= 3 && lastSkel.length >= 3) {
       for (const st of studentPool) {
         const { firstName, lastName } = splitFirstAndLastName(st.name);
         const dbFirstSkel = stripThaiVowelsAndTones(firstName);
         const dbLastSkel = stripThaiVowelsAndTones(lastName);
-        if (
-          (dbFirstSkel === firstSkel || fuzzySubstringMatch(dbFirstSkel, firstSkel, 1)) &&
-          (dbLastSkel === lastSkel || dbLastSkel.startsWith(lastSkel) || lastSkel.startsWith(dbLastSkel) || fuzzySubstringMatch(dbLastSkel, lastSkel, 1))
-        ) {
+
+        const firstMatches = dbFirstSkel === firstSkel || (dbFirstSkel.length >= 4 && fuzzySubstringMatch(dbFirstSkel, firstSkel, 1));
+        const lastMatches = dbLastSkel === lastSkel || (dbLastSkel.length >= 4 && fuzzySubstringMatch(dbLastSkel, lastSkel, 1));
+
+        if (firstMatches && lastMatches) {
           return st;
         }
       }

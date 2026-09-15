@@ -94,13 +94,20 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
         }));
       }
 
-      // Match extracted students against database
+      // Match extracted students against database (5,721 students)
       const pool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
       const matchedList: any[] = [];
       const seenIds = new Set<string>();
 
       if (result.students && Array.isArray(result.students)) {
         for (const st of result.students) {
+          const schoolName = (st.school || '').trim();
+          // Filter out candidates from other Assumption schools (e.g., อัสสัมชัญ บางรัก, อัสสัมชัญสมุทรปราการ)
+          if (schoolName && schoolName.includes('อัสสัมชัญ') && !schoolName.includes('ธนบุรี') && !schoolName.includes('ACT') && !schoolName.includes('อสธ')) {
+            console.log('Skipping non-ACT student from other school:', st.name, schoolName);
+            continue;
+          }
+
           const dbStudent = findMatchingStudent(st.name, pool);
           if (dbStudent && !seenIds.has(dbStudent.studentId)) {
             seenIds.add(dbStudent.studentId);
@@ -116,8 +123,8 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
               program: dbStudent.program,
               email: dbStudent.email || ''
             });
-          } else if (!dbStudent) {
-            // Include unmatched candidate so teacher can verify
+          } else if (!dbStudent && (!schoolName || schoolName.includes('ธนบุรี') || schoolName.includes('ACT') || schoolName.includes('อสธ'))) {
+            // Include unmatched ACT candidate if school explicitly matches ACT
             matchedList.push({
               name: st.name,
               cleanName: st.name,
