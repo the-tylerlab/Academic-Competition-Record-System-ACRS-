@@ -352,7 +352,8 @@ export function extractAndMatchStudentsFromText(
     const skelFirst = stripThaiVowelsAndTones(firstName);
     const skelLast = stripThaiVowelsAndTones(lastName);
 
-    if (!cleanDbName || cleanDbName.length < 4 || !firstName || !lastName) return;
+    // Require both real First Name AND Last Name (at least 3 consonants each, preventing false matches on placeholders like 'มะลิ -')
+    if (!cleanDbName || cleanDbName.length < 5 || !firstName || !lastName || skelFirst.length < 3 || skelLast.length < 3) return;
     if (processedStudentIds.has(student.studentId)) return;
 
     let foundInText = false;
@@ -367,10 +368,10 @@ export function extractAndMatchStudentsFromText(
 
       // Condition A: Full First + Last Name exact string in window
       const targetNoSpace = (firstName + lastName).replace(/\s+/g, '');
-      const hasDirectFull = targetNoSpace.length >= 4 && windowNoSpace.includes(targetNoSpace);
+      const hasDirectFull = targetNoSpace.length >= 6 && windowNoSpace.includes(targetNoSpace);
 
       // Condition B: Full First + Last Name consonant skeleton in window
-      const hasFullSkel = skelDbName.length >= 4 && skelWindow.includes(skelDbName);
+      const hasFullSkel = skelDbName.length >= 6 && skelWindow.includes(skelDbName);
 
       // Condition C: BOTH First Name skeleton AND Last Name skeleton appear in window
       const hasBothFirstAndLast = (skelFirst.length >= 3 && skelWindow.includes(skelFirst)) && 
@@ -423,8 +424,10 @@ export function extractAndMatchStudentsFromText(
         const skelFirst = stripThaiVowelsAndTones(firstName);
         const skelLast = stripThaiVowelsAndTones(lastName);
 
+        if (!cleanDbName || !firstName || !lastName || skelFirst.length < 3 || skelLast.length < 3) return;
+
         if (
-          (skelDbName.length >= 4 && skelNeighbor.includes(skelDbName)) ||
+          (skelDbName.length >= 6 && skelNeighbor.includes(skelDbName)) ||
           (skelFirst.length >= 3 && skelNeighbor.includes(skelFirst) && skelLast.length >= 3 && skelNeighbor.includes(skelLast))
         ) {
           const nearbyLines = lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 5));
