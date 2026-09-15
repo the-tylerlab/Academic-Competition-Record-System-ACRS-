@@ -284,17 +284,33 @@ export function extractAndMatchStudentsFromText(
   });
 
   // Strategy 2: Extract candidate names from document lines
-  // (e.g. lines with prefixes "นาย...", "นางสาว...", "เด็กชาย...", "Mr....", or list lines "1. ...")
-  const NAME_LINE_REGEX = /(?:(?:[0-9]+[\.\)\-]|[-*•])\s*)?(?:(นาย|นางสาว|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|น\.ส\.|นาง|Mr\.|Miss|Mrs\.|Master)\s+([ก-๙a-zA-Z]+(?:\s+[ก-๙a-zA-Z]+)*))/g;
+  // (e.g. lines with "1. ด.ช.จิรเดช ธรรมชัย", "น.ส.พชรมน ภูเณรพากร", "นายชัญญากาจน์ ภัทรสาธิต")
+  const NAME_LINE_REGEX = /(?:(?:[0-9]+[\.\)\-]|[-*•])\s*)?(?:(นาย|นางสาว|เด็กชาย|เด็กหญิง|ด\.ช\.|ด\.ญ\.|ด\.ช|ด\.ญ|น\.ส\.|น\.ส|นาง|Mr\.|Miss|Mrs\.|Master)\s*([ก-๙a-zA-Z]+(?:\s+[ก-๙a-zA-Z]+)*))/g;
 
   lines.forEach((line, index) => {
+    // Skip document official header lines
+    if (/สมเด็จ|พระเจ้าพี่นางเธอ|พระราชทาน|พระอุปถัมภ์|กรมหลวง|เจ้าฟ้า|มูลนิธิส่งเสริม|ประกาศผู้ผ่าน/i.test(line)) {
+      return;
+    }
+
     // If line has name pattern
     let match: RegExpExecArray | null;
     const regex = new RegExp(NAME_LINE_REGEX);
     while ((match = regex.exec(line)) !== null) {
       const prefix = match[1] || '';
-      const namePart = match[2] || '';
-      const candidateFullName = `${prefix} ${namePart}`.trim();
+      let namePart = (match[2] || '').trim();
+      
+      // Separate school or suffix if attached (e.g. "ธรรมชัย โรงเรียนสวนกุหลาบ" -> name: "ธรรมชัย", school: "โรงเรียนสวนกุหลาบ")
+      let schoolAffiliation = '';
+      const schoolMatch = namePart.match(/(.*?)\s+(โรงเรียน[^\n]+|สาธิต[^\n]+)/);
+      if (schoolMatch) {
+        namePart = schoolMatch[1].trim();
+        schoolAffiliation = schoolMatch[2].trim();
+      }
+
+      // Clean multiple inner spaces
+      namePart = namePart.replace(/\s+/g, ' ');
+      const candidateFullName = `${prefix}${prefix.endsWith('.') ? ' ' : ' '}${namePart}`.trim();
       const cleanCandidate = cleanAndNormalizeThaiName(candidateFullName);
 
       if (!cleanCandidate || cleanCandidate.length < 4) continue;
@@ -305,13 +321,14 @@ export function extractAndMatchStudentsFromText(
 
       const nearbyLines = lines.slice(Math.max(0, index - 3), Math.min(lines.length, index + 4));
       const { subject, award } = extractContextInfo(line, nearbyLines);
+      const finalSubject = subject || (schoolAffiliation ? `ชีววิทยา / ${schoolAffiliation}` : 'ชีววิทยา (สอวน.)');
 
       if (matchedDb) {
         if (!processedStudentIds.has(matchedDb.studentId)) {
           results.push({
             name: matchedDb.name, // or candidateFullName
             cleanName: cleanCandidate,
-            subject,
+            subject: finalSubject,
             award,
             isMatched: true,
             studentId: matchedDb.studentId,
@@ -329,7 +346,7 @@ export function extractAndMatchStudentsFromText(
         results.push({
           name: candidateFullName,
           cleanName: cleanCandidate,
-          subject,
+          subject: finalSubject,
           award,
           isMatched: false,
           studentId: 'ไม่พบข้อมูล',

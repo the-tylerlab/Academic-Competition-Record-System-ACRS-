@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Upload, ChevronDown, CheckCircle2, AlertCircle, Plus, FileText, Globe, RefreshCw } from 'lucide-react';
+import { Upload, ChevronDown, CheckCircle2, AlertCircle, Plus, FileText, Globe, RefreshCw, Sparkles, BookOpen } from 'lucide-react';
 import { MOCK_SOURCES, DEFAULT_STUDENTS } from '../mockData';
 import { extractTextFromPdf } from '../lib/pdfExtractor';
 import { extractAndMatchStudentsFromText, findMatchingStudent, cleanAndNormalizeThaiName } from '../lib/nameMatcher';
@@ -13,7 +13,7 @@ interface SearcherProps {
 export default function Searcher({ students, onSaveRecord, role }: SearcherProps) {
   const activeStudentsPool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
 
-  const [selectedSource, setSelectedSource] = useState<any>(MOCK_SOURCES[0]);
+  const [selectedSource, setSelectedSource] = useState<any>(null);
   const [inputType, setInputType] = useState<'file' | 'url'>('file');
   const [customUrl, setCustomUrl] = useState('');
   
@@ -21,33 +21,40 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
   const [processProgress, setProcessProgress] = useState(0);
   const [searchCompleted, setSearchCompleted] = useState(false);
   
-  const [scannedText, setScannedText] = useState(MOCK_SOURCES[0].rawText);
+  // Real scanned text from file or user input (not hardcoded mock text)
+  const [scannedText, setScannedText] = useState('');
   const [foundStudentsList, setFoundStudentsList] = useState<any[]>([]);
   const [isFileReading, setIsFileReading] = useState(false);
+  const [readingStatus, setReadingStatus] = useState({ message: '', percent: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [recordMeta, setRecordMeta] = useState({
-    competitionName: "การแข่งขันทักษะทางวิชาการประจำปีการศึกษา 2569",
+    competitionName: "การแข่งขันโอลิมปิกวิชาการ สอวน. ประจำปีการศึกษา 2569",
     academicYear: "2569",
     notes: ""
   });
 
+  // Handle Real File Upload (PDF, TXT, CSV, Images)
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setIsFileReading(true);
+      setReadingStatus({ message: 'กำลังอ่านไฟล์ ' + file.name + '...', percent: 15 });
       setSearchCompleted(false);
+      setScannedText(''); // Clear any previous text immediately
 
       try {
         let extracted = '';
         if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
           const arrayBuffer = await file.arrayBuffer();
-          extracted = await extractTextFromPdf(arrayBuffer);
+          extracted = await extractTextFromPdf(arrayBuffer, (msg, pct) => {
+            setReadingStatus({ message: msg, percent: pct });
+          });
         } else if (file.type.startsWith('text/') || file.name.toLowerCase().endsWith('.txt') || file.name.toLowerCase().endsWith('.csv')) {
           extracted = await file.text();
         } else {
           // Image or other document
-          extracted = `[เอกสารแนบ: ${file.name}]\n(หากระบบ OCR ไม่ดึงข้อความอัตโนมัติ สามารถพิมพ์หรือวางข้อความประกาศในกล่องข้อความดิบด้านล่างได้โดยตรง)`;
+          extracted = `[ไฟล์แนบ: ${file.name}]\nสามารถพิมพ์หรือวางข้อความประกาศผลในช่องข้อความดิบด้านล่างเพื่อประมวลผลทันที`;
         }
 
         const source = {
@@ -55,38 +62,55 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           name: file.name,
           fileName: file.name,
           rawText: extracted,
-          description: extracted ? `อ่านข้อความเรียบร้อย (${extracted.length} ตัวอักษร)` : 'อัปโหลดสำเร็จ พร้อมทำการสแกน'
+          description: extracted ? `สกัดข้อความสำเร็จ (${extracted.length} ตัวอักษร)` : 'อัปโหลดเรียบร้อย'
         };
 
         setSelectedSource(source);
+        setScannedText(extracted);
+
+        // Auto-detect title from document text
         if (extracted) {
-          setScannedText(extracted);
+          if (extracted.includes('ชีววิทยา') && extracted.includes('สอวน')) {
+            setRecordMeta(prev => ({ ...prev, competitionName: "การสอบคัดเลือกโอลิมปิกวิชาการค่ายที่ 1 สาขาวิชาชีววิทยา สอวน. ปีการศึกษา 2569" }));
+          } else if (extracted.includes('โอลิมปิกวิชาการ') || extracted.includes('สอวน')) {
+            setRecordMeta(prev => ({ ...prev, competitionName: "การแข่งขันคัดเลือกโอลิมปิกวิชาการ สอวน. ประจำปีการศึกษา 2569" }));
+          }
         }
       } catch (err: any) {
         console.error('File read error:', err);
-        alert('เกิดข้อผิดพลาดในการอ่านไฟล์: ' + err.message);
+        alert('เกิดข้อผิดพลาดในการอ่านไฟล์ PDF: ' + err.message);
       } finally {
         setIsFileReading(false);
       }
     }
   };
 
+  // Load sample mock dataset for testing
+  const handleLoadMockSource = (mockIndex: number) => {
+    const mock = MOCK_SOURCES[mockIndex];
+    setSelectedSource(mock);
+    setScannedText(mock.rawText);
+    setSearchCompleted(false);
+    if (mockIndex === 0) {
+      setRecordMeta(prev => ({ ...prev, competitionName: "การแข่งขันคัดเลือกโอลิมปิกวิชาการ สอวน. ประจำปีการศึกษา 2569" }));
+    } else if (mockIndex === 1) {
+      setRecordMeta(prev => ({ ...prev, competitionName: "การประกวดสุนทรพจน์ภาษาอังกฤษระดับมัธยมศึกษา 2026" }));
+    } else {
+      setRecordMeta(prev => ({ ...prev, competitionName: "การพิจารณาทุนการเรียนดีเด่น ประจำปีการศึกษา 2569" }));
+    }
+  };
+
   const handleIdSearchAndExtract = () => {
+    if (!scannedText || !scannedText.trim()) {
+      alert("กรุณาอัปโหลดไฟล์ PDF หรือวางข้อความประกาศผลในกล่องข้อความดิบก่อนเริ่มประมวลผล");
+      return;
+    }
+
     setIsProcessing(true);
     setProcessProgress(0);
     setSearchCompleted(false);
 
-    let textToProcess = scannedText;
-    if (inputType === 'url' && customUrl.trim() !== '') {
-      const matchedSource = MOCK_SOURCES.find(s => s.sourceType === 'url');
-      if (matchedSource && (!textToProcess || textToProcess === MOCK_SOURCES[0].rawText)) {
-        textToProcess = matchedSource.rawText;
-        setScannedText(matchedSource.rawText);
-      }
-    } else if (inputType === 'file' && (!textToProcess || textToProcess.trim() === '')) {
-      textToProcess = selectedSource?.rawText || MOCK_SOURCES[0].rawText;
-      setScannedText(textToProcess);
-    }
+    const textToProcess = scannedText;
 
     const interval = setInterval(() => {
       setProcessProgress((prev) => {
@@ -98,7 +122,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           // SMART MATCHING & CURRICULUM CLASSIFICATION
           let processedList = extractAndMatchStudentsFromText(textToProcess, activeStudentsPool);
 
-          // Fallback / merge if activeSource has parsedStudents (e.g. mock demo datasets)
+          // If activeSource had predefined parsedStudents (e.g. mock demo datasets), merge them
           if (selectedSource?.parsedStudents && Array.isArray(selectedSource.parsedStudents)) {
             const existingStudentIds = new Set(processedList.filter(s => s.isMatched).map(s => s.studentId));
             const existingNames = new Set(processedList.map(s => cleanAndNormalizeThaiName(s.name)));
@@ -111,7 +135,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                   if (!existingStudentIds.has(dbStudent.studentId)) {
                     processedList.push({
                       name: dbStudent.name || parsed.name,
-                      subject: parsed.subject || 'วิชาการ',
+                      subject: parsed.subject || 'ชีววิทยา (สอวน.)',
                       award: parsed.award || 'ผ่านการคัดเลือก',
                       isMatched: true,
                       studentId: dbStudent.studentId,
@@ -159,7 +183,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
       year: recordMeta.academicYear,
       notes: recordMeta.notes,
       sourceType: inputType,
-      sourceName: inputType === 'url' ? (customUrl || selectedSource.webUrl || 'เว็บไซต์ประกาศ') : (selectedSource.fileName || selectedSource.name || 'ไฟล์ประกาศ'),
+      sourceName: inputType === 'url' ? (customUrl || selectedSource?.webUrl || 'เว็บไซต์ประกาศ') : (selectedSource?.fileName || selectedSource?.name || 'ไฟล์ประกาศ PDF'),
       recordedBy: role === 'academic' ? 'ฝ่ายวิชาการ' : 'ครูผู้ส่งผลงาน',
       students: foundStudentsList,
       status: "รออนุมัติจัดเก็บ"
@@ -218,8 +242,8 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
       ...foundStudentsList,
       {
         name: "",
-        subject: "วิชาการ",
-        award: "เกียรติบัตร",
+        subject: "ชีววิทยา (สอวน.)",
+        award: "ผ่านการคัดเลือก ค่าย 1",
         isMatched: false,
         studentId: "",
         grade: "ม.4",
@@ -243,12 +267,12 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
               <span>ค้นหาเลขประจำตัวและจัดแยกหลักสูตรอัตโนมัติ</span>
             </h3>
             <p className="text-base text-slate-500 mt-1">
-              นำเข้าไฟล์ประกาศผล (PDF, รูปภาพ หรือข้อความ) ระบบจะประมวลผลชื่อ-สกุล เทียบกับฐานข้อมูลโรงเรียนและระบุรหัสประจำตัว/หลักสูตรทันที
+              อัปโหลดไฟล์ประกาศผล PDF ระบบจะสกัดข้อความและชื่อ-สกุลจากเอกสารจริง เทียบกับฐานข้อมูลโรงเรียนเพื่อระบุรหัสประจำตัวและแผนการเรียนทันที
             </p>
           </div>
           <div className="text-sm font-semibold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200 flex items-center gap-2 w-fit">
             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            ฐานข้อมูลนักเรียน: <strong className="text-slate-900">{activeStudentsPool.length} คน</strong>
+            ฐานข้อมูลนักเรียนในระบบ: <strong className="text-slate-900">{activeStudentsPool.length} คน</strong>
           </div>
         </div>
 
@@ -257,7 +281,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           <span className="text-sm font-extrabold text-slate-400 uppercase tracking-wider">กระบวนการวิเคราะห์ผลงาน:</span>
           <div className="flex items-center gap-2 text-sm font-bold">
             <span className={`px-2.5 py-1 rounded transition-colors ${!searchCompleted && !isProcessing ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-500'}`}>
-              1. นำเข้าเอกสาร
+              1. นำเข้าเอกสารประกาศ
             </span>
             <span className="text-slate-300">&rarr;</span>
             <span className={`px-2.5 py-1 rounded transition-colors ${isProcessing ? 'bg-slate-900 text-white animate-pulse' : 'bg-slate-200 text-slate-500'}`}>
@@ -283,7 +307,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
               value={recordMeta.competitionName}
               onChange={(e) => setRecordMeta({...recordMeta, competitionName: e.target.value})}
               className="w-full h-[42px] px-4 py-2 border border-slate-200 bg-transparent rounded-lg text-base focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-2xs outline-none font-semibold text-slate-800"
-              placeholder="เช่น การแข่งขันคัดเลือกโอลิมปิกวิชาการ สอวน."
+              placeholder="เช่น การสอบคัดเลือกโอลิมปิกวิชาการ สอวน."
             />
           </div>
           <div className="md:col-span-3">
@@ -314,8 +338,26 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
         </div>
 
         {/* FILE VS URL SELECTION TAB */}
-        <div className="mb-8">
-          <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider mb-3">ช่องทางนำเข้าข้อมูลผลรางวัล</label>
+        <div className="mb-6">
+          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-3">
+            <label className="block text-sm font-bold text-slate-500 uppercase tracking-wider">ช่องทางนำเข้าข้อมูลผลรางวัล</label>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 font-semibold">หรือทดลองข้อมูลตัวอย่าง:</span>
+              <button
+                onClick={() => handleLoadMockSource(0)}
+                className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-bold transition border border-slate-200 flex items-center gap-1 cursor-pointer"
+              >
+                <Sparkles size={12} className="text-indigo-600" /> สอวน. ตัวอย่าง
+              </button>
+              <button
+                onClick={() => handleLoadMockSource(1)}
+                className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded font-bold transition border border-slate-200 flex items-center gap-1 cursor-pointer"
+              >
+                <BookOpen size={12} className="text-indigo-600" /> สุนทรพจน์
+              </button>
+            </div>
+          </div>
+
           <div className="flex gap-1 p-1 bg-slate-100 rounded-lg w-fit mb-5 border border-slate-200 shadow-3xs">
             <button
               onClick={() => { setInputType('file'); setSearchCompleted(false); }}
@@ -352,12 +394,26 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                       <Upload size={24} className="text-indigo-600" />
                     )}
                   </div>
-                  <p className="text-base font-bold text-slate-900 mb-1">
-                    {isFileReading ? 'กำลังสกัดข้อความจากไฟล์...' : (selectedSource?.id === 'uploaded-file' ? selectedSource.name : 'คลิกเพื่อเลือกไฟล์ PDF ประกาศ หรือลากไฟล์มาวางที่นี่')}
-                  </p>
-                  <p className="text-sm text-slate-500 font-medium">
-                    {selectedSource?.id === 'uploaded-file' ? selectedSource.description : 'รองรับไฟล์ PDF (ระบบจะสกัดชื่อ-สกุลจากทุกหน้าให้อัตโนมัติ), TXT, รูปภาพ'}
-                  </p>
+                  
+                  {isFileReading ? (
+                    <div className="flex flex-col items-center max-w-sm w-full gap-2">
+                      <p className="text-base font-bold text-slate-900">{readingStatus.message}</p>
+                      <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                        <div className="bg-indigo-600 h-full transition-all duration-300" style={{ width: `${readingStatus.percent}%` }}></div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-base font-bold text-slate-900 mb-1">
+                        {selectedSource?.id === 'uploaded-file' ? selectedSource.name : 'คลิกเพื่อเลือกไฟล์ PDF ประกาศ หรือลากไฟล์มาวางที่นี่'}
+                      </p>
+                      <p className="text-sm text-slate-500 font-medium">
+                        {selectedSource?.id === 'uploaded-file' 
+                          ? `อ่านไฟล์สำเร็จ (${scannedText.length} ตัวอักษร) พร้อมทำการประมวลผล` 
+                          : 'รองรับไฟล์ PDF (ระบบสกัดข้อความภาษาไทยและตารางทุกหน้า), TXT, CSV'}
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -382,12 +438,12 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           <div className="bg-slate-50 px-5 py-4 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
             <span className="text-sm font-extrabold text-slate-600 uppercase tracking-widest flex items-center gap-2">
               <FileText size={16} className="text-slate-500" />
-              {inputType === 'file' ? 'ระบบสกัดข้อความและประมวลผลจากเอกสาร' : 'ระบบประมวลผลข้อความจากเว็บไซต์'}
+              ข้อความที่สกัดได้จากเอกสาร (RAW TEXT)
             </span>
             <div className="flex items-center gap-2">
               <button 
                 onClick={handleIdSearchAndExtract}
-                disabled={isProcessing || isFileReading}
+                disabled={isProcessing || isFileReading || !scannedText.trim()}
                 className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-base font-bold transition-all disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-2"
               >
                 {isProcessing ? (
@@ -406,14 +462,13 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           </div>
 
           <div className="p-6 bg-slate-50/40">
-            {/* RAW TEXT & FOUND SUMMARY */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               
               {/* RAW TEXT BOX */}
               <div className="lg:col-span-6 flex flex-col">
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">
-                    ข้อความดิบที่สกัดได้ (RAW TEXT - สามารถแก้ไขหรือวางเพิ่มได้)
+                    ข้อความดิบจากไฟล์ PDF (สามารถแก้ไข ลบ หรือวางข้อความเพิ่มได้)
                   </label>
                   <span className="text-xs font-semibold text-slate-400">
                     {scannedText.length} ตัวอักษร
@@ -425,7 +480,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                     setScannedText(e.target.value);
                     setSearchCompleted(false);
                   }}
-                  placeholder="วางข้อความรายชื่อประกาศ หรืออัปโหลดไฟล์ PDF ด้านบน..."
+                  placeholder="เมื่อเลือกไฟล์ PDF ข้อความจากเอกสารจะปรากฏที่นี่ หรือสามารถคัดลอกข้อความประกาศผลมาวางในช่องนี้ได้โดยตรง..."
                   rows={9}
                   className="w-full text-sm text-slate-800 bg-white p-3.5 border border-slate-200 rounded-lg font-mono focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:outline-hidden transition shadow-inner resize-y leading-relaxed"
                 />
@@ -489,7 +544,7 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                         )}
                         <div className="min-w-0">
                           <p className="font-bold text-slate-900 truncate">{st.name}</p>
-                          <p className="text-xs text-slate-500 truncate">{st.subject || st.award || 'วิชาการ'}</p>
+                          <p className="text-xs text-slate-500 truncate">{st.subject || st.award || 'ชีววิทยา (สอวน.)'}</p>
                         </div>
                       </div>
                       
@@ -506,8 +561,8 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
                             </span>
                           </>
                         ) : (
-                          <span className="bg-rose-50 text-rose-700 text-xs px-2 py-0.5 rounded font-bold border border-rose-200">
-                            ไม่พบในฐานข้อมูล
+                          <span className="bg-amber-50 text-amber-800 text-xs px-2 py-0.5 rounded font-bold border border-amber-200">
+                            จากประกาศ (รอระบุรหัส)
                           </span>
                         )}
                       </div>
