@@ -189,7 +189,7 @@ export function splitFirstAndLastName(name: string): { firstName: string; lastNa
 }
 
 /**
- * Compare two Thai names based STRICTLY on First Name + Last Name (ชื่อ-สกุล)
+ * Compare two Thai names based STRICTLY on BOTH First Name + Last Name (ชื่อ และ นามสกุล)
  */
 export function isNameMatch(dbName: string, queryName: string): boolean {
   if (!dbName || !queryName) return false;
@@ -199,40 +199,39 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
 
   if (!cleanDb || !cleanQuery) return false;
 
-  // 1. Direct match on pure First Name + Last Name
+  // 1. Direct exact match
   if (cleanDb === cleanQuery) return true;
 
-  // 2. Spaceless match (handling Thai no-space formatting)
+  // 2. Exact match ignoring spaces
   const noSpaceDb = cleanDb.replace(/\s+/g, '');
   const noSpaceQuery = cleanQuery.replace(/\s+/g, '');
-  if (noSpaceDb === noSpaceQuery) return true;
+  if (noSpaceDb === noSpaceQuery && noSpaceDb.length >= 6) return true;
 
-  // 3. Consonant skeleton match (ignoring OCR vowel/tone typos)
-  const skelDb = stripThaiVowelsAndTones(cleanDb);
-  const skelQuery = stripThaiVowelsAndTones(cleanQuery);
-  if (skelDb.length >= 4 && skelQuery.length >= 4) {
-    if (skelDb === skelQuery) return true;
-    if (skelDb.includes(skelQuery) || skelQuery.includes(skelDb)) return true;
-    if (fuzzySubstringMatch(skelQuery, skelDb, 1) || fuzzySubstringMatch(skelDb, skelQuery, 1)) return true;
-  }
-
-  // 4. First name & Last name matching
+  // Split into First and Last names
   const dbParts = cleanDb.split(' ').filter(Boolean);
   const queryParts = cleanQuery.split(' ').filter(Boolean);
 
+  // MUST require both First Name and Last Name in both DB and Query
   if (dbParts.length >= 2 && queryParts.length >= 2) {
     const dbFirst = dbParts[0];
-    const dbLast = dbParts[dbParts.length - 1];
+    const dbLast = dbParts.slice(1).join('');
     const queryFirst = queryParts[0];
-    const queryLast = queryParts[queryParts.length - 1];
+    const queryLast = queryParts.slice(1).join('');
 
     const skelFirstDb = stripThaiVowelsAndTones(dbFirst);
     const skelFirstQuery = stripThaiVowelsAndTones(queryFirst);
     const skelLastDb = stripThaiVowelsAndTones(dbLast);
     const skelLastQuery = stripThaiVowelsAndTones(queryLast);
 
-    if (skelFirstDb === skelFirstQuery && skelFirstDb.length >= 3) {
-      if (skelLastDb === skelLastQuery || skelLastDb.startsWith(skelLastQuery) || skelLastQuery.startsWith(skelLastDb)) {
+    // Both first name and last name must have at least 3 consonant characters
+    if (skelFirstDb.length >= 3 && skelFirstQuery.length >= 3 && skelLastDb.length >= 3 && skelLastQuery.length >= 3) {
+      // First name matches (exact skeleton or 1-char typo)
+      const firstMatches = skelFirstDb === skelFirstQuery || (skelFirstDb.length >= 4 && levenshteinDistance(skelFirstDb, skelFirstQuery) <= 1);
+      
+      // Last name matches (exact skeleton or 1-char typo)
+      const lastMatches = skelLastDb === skelLastQuery || (skelLastDb.length >= 4 && levenshteinDistance(skelLastDb, skelLastQuery) <= 1);
+
+      if (firstMatches && lastMatches) {
         return true;
       }
     }
@@ -242,39 +241,17 @@ export function isNameMatch(dbName: string, queryName: string): boolean {
 }
 
 /**
- * Find matching student from student roster by pure Name - Surname
+ * Find matching student from student roster by STRICT Name - Surname
  */
 export function findMatchingStudent(targetName: string, students: Student[]): Student | null {
   const studentPool = students && students.length > 0 ? students : DEFAULT_STUDENTS;
   const cleanTarget = cleanAndNormalizeThaiName(targetName);
   if (!cleanTarget) return null;
 
-  // 1. Direct match with isNameMatch
+  // Strict match on both first and last name
   for (const st of studentPool) {
     if (isNameMatch(st.name, targetName)) {
       return st;
-    }
-  }
-
-  // 2. Strict First + Last name matching (both must have >= 3 consonant skeleton characters)
-  const parts = cleanTarget.split(' ').filter(Boolean);
-  if (parts.length >= 2) {
-    const firstSkel = stripThaiVowelsAndTones(parts[0]);
-    const lastSkel = stripThaiVowelsAndTones(parts.slice(1).join(''));
-
-    if (firstSkel.length >= 3 && lastSkel.length >= 3) {
-      for (const st of studentPool) {
-        const { firstName, lastName } = splitFirstAndLastName(st.name);
-        const dbFirstSkel = stripThaiVowelsAndTones(firstName);
-        const dbLastSkel = stripThaiVowelsAndTones(lastName);
-
-        const firstMatches = dbFirstSkel === firstSkel || (dbFirstSkel.length >= 4 && fuzzySubstringMatch(dbFirstSkel, firstSkel, 1));
-        const lastMatches = dbLastSkel === lastSkel || (dbLastSkel.length >= 4 && fuzzySubstringMatch(dbLastSkel, lastSkel, 1));
-
-        if (firstMatches && lastMatches) {
-          return st;
-        }
-      }
     }
   }
 

@@ -111,31 +111,18 @@ export default function Searcher({ students, onSaveRecord, role }: SearcherProps
           const dbStudent = findMatchingStudent(st.name, pool);
           if (dbStudent && !seenIds.has(dbStudent.studentId)) {
             seenIds.add(dbStudent.studentId);
+            const dynamicSubject = st.subject || (result.competitionName?.includes('ชีววิทยา') ? 'ชีววิทยา (สอวน.)' : result.competitionName?.includes('คอมพิวเตอร์') ? 'คอมพิวเตอร์ (สอวน.)' : result.competitionName || 'สอวน. ค่าย 1');
             matchedList.push({
               name: cleanAndNormalizeThaiName(dbStudent.name),
               cleanName: cleanAndNormalizeThaiName(dbStudent.name),
-              subject: st.subject || 'ชีววิทยา (สอวน.)',
-              award: st.award || 'ผ่านการคัดเลือก',
+              subject: dynamicSubject,
+              award: st.award || 'ผ่านการคัดเลือก ค่าย 1',
               isMatched: true,
               studentId: dbStudent.studentId,
               grade: dbStudent.grade,
               room: dbStudent.room,
               program: dbStudent.program,
               email: dbStudent.email || ''
-            });
-          } else if (!dbStudent && (!schoolName || schoolName.includes('ธนบุรี') || schoolName.includes('ACT') || schoolName.includes('อสธ'))) {
-            // Include unmatched ACT candidate if school explicitly matches ACT
-            matchedList.push({
-              name: st.name,
-              cleanName: st.name,
-              subject: st.subject || 'ชีววิทยา (สอวน.)',
-              award: st.award || 'ผ่านการคัดเลือก',
-              isMatched: false,
-              studentId: '',
-              grade: st.grade || 'ม.5',
-              room: '',
-              program: 'Normal',
-              email: ''
             });
           }
         }
